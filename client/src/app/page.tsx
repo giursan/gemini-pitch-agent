@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import { useEyeContact } from '../hooks/useEyeContact';
+import { useBodyLanguageAnalysis, TED_BENCHMARKS } from '../hooks/useBodyLanguageAnalysis';
+import { useGestureRecognizer } from '../hooks/useGestureRecognizer';
 
 // Lightweight utility to convert Float32Array to 16-bit PCM Base64
 function floatTo16BitPcmAndBase64(input: Float32Array): string {
@@ -32,7 +34,18 @@ export default function Home() {
   const wsRef = useRef<WebSocket | null>(null);
 
   // Call the MediaPipe CV hook with the overlay canvas
-  const realTimeEyeContact = useEyeContact(webcamRef as any || { current: null }, overlayCanvasRef);
+  const { eyeContactScore: realTimeEyeContact, landmarksRef } = useEyeContact(webcamRef as any || { current: null }, overlayCanvasRef);
+
+  // Body language analysis (consumes landmarks from the CV hook)
+  const { metrics: bodyMetrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, true);
+
+  // Gesture recognition — derive a raw video ref from the Webcam component
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    const video = (webcamRef.current as any)?.video || null;
+    videoElementRef.current = video;
+  });
+  const gestureMetrics = useGestureRecognizer(videoElementRef, isConnected);
 
   // Audio & VAD Refs
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -157,7 +170,15 @@ export default function Home() {
         ws.send(JSON.stringify({
           type: 'client_telemetry',
           data: {
-            eyeContact: realTimeEyeContact
+            eyeContact: realTimeEyeContact,
+            postureAngle: bodyMetrics.postureAngle,
+            isGoodPosture: bodyMetrics.isGoodPosture,
+            gesturesPerMin: bodyMetrics.gesturesPerMin,
+            handVisibility: bodyMetrics.handVisibility,
+            smileScore: bodyMetrics.smileScore,
+            overallScore: bodyMetrics.overallScore,
+            currentGestures: gestureMetrics.currentGestures.map(g => g.gesture),
+            openGestureRatio: gestureMetrics.openGestureRatio,
           }
         }));
       }
@@ -220,7 +241,7 @@ export default function Home() {
         </section>
 
         <aside className="w-full lg:w-80 flex flex-col gap-4">
-          <div className="bg-neutral-900 border border-white/5 p-5 rounded-2xl shadow-lg flex-1">
+          <div className="bg-neutral-900 border border-white/5 p-5 rounded-2xl shadow-lg flex-1 overflow-y-auto">
             <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500 mb-4">Live Metrics</h2>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
@@ -230,15 +251,86 @@ export default function Home() {
                 </span>
               </div>
               <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Posture</span>
+                <span className={`font-mono font-bold ${bodyMetrics.isGoodPosture ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {bodyMetrics.isGoodPosture ? '✓ Upright' : '⚠ Slouching'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Posture Angle</span>
+                <span className={`font-mono font-bold ${bodyMetrics.postureAngle > benchmarks.slouchAngle ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {bodyMetrics.postureAngle}°
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Shoulder Balance</span>
+                <span className={`font-mono font-bold ${bodyMetrics.shoulderSymmetry > 0.8 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {Math.round(bodyMetrics.shoulderSymmetry * 100)}%
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Gestures/min</span>
+                <span className={`font-mono font-bold ${bodyMetrics.gesturesPerMin >= 10 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {bodyMetrics.gesturesPerMin} <span className="text-neutral-600 text-xs">/ {benchmarks.gesturesPerMin}</span>
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Stability</span>
+                <span className={`font-mono font-bold ${bodyMetrics.bodyStability > 0.7 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {Math.round(bodyMetrics.bodyStability * 100)}%
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Hand Visibility</span>
+                <span className={`font-mono font-bold ${bodyMetrics.handVisibility > 0.6 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {Math.round(bodyMetrics.handVisibility * 100)}%
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Smile</span>
+                <span className={`font-mono font-bold ${bodyMetrics.smileScore > 0.3 ? 'text-emerald-400' : 'text-neutral-400'}`}>
+                  {Math.round(bodyMetrics.smileScore * 100)}%
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Expressiveness</span>
+                <span className={`font-mono font-bold ${bodyMetrics.expressiveness > 0.3 ? 'text-emerald-400' : 'text-neutral-400'}`}>
+                  {Math.round(bodyMetrics.expressiveness * 100)}%
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
                 <span className="text-neutral-400">Pacing (WPM)</span>
                 <span className={`font-mono font-bold ${sessionMetrics.pacing > 120 && sessionMetrics.pacing < 160 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {sessionMetrics.pacing > 0 ? sessionMetrics.pacing : '--'}
                 </span>
               </div>
-              <div className="flex justify-between items-center text-sm pb-2">
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
                 <span className="text-neutral-400">Filler Words</span>
                 <span className={`font-mono font-bold ${sessionMetrics.filler < 5 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {sessionMetrics.filler} / min
+                </span>
+              </div>
+              {/* Gesture Recognition */}
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Hand Gesture</span>
+                <span className="font-mono font-bold text-purple-400">
+                  {gestureMetrics.currentGestures.length > 0
+                    ? gestureMetrics.currentGestures.map(g => g.gesture.replace('_', ' ')).join(' / ')
+                    : '--'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+                <span className="text-neutral-400">Open Gestures</span>
+                <span className={`font-mono font-bold ${gestureMetrics.openGestureRatio > 0.5 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {Math.round(gestureMetrics.openGestureRatio * 100)}%
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm pt-2">
+                <span className="text-neutral-300 font-semibold">Overall Score</span>
+                <span className={`font-mono font-bold text-lg ${bodyMetrics.overallScore >= 70 ? 'text-emerald-400' :
+                  bodyMetrics.overallScore >= 40 ? 'text-amber-400' : 'text-red-400'
+                  }`}>
+                  {bodyMetrics.overallScore}/100
                 </span>
               </div>
             </div>

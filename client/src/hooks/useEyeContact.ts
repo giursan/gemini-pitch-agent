@@ -2,11 +2,27 @@ import { useEffect, useRef, useState } from 'react';
 import type * as cam from '@mediapipe/camera_utils';
 import type { FaceMesh as FaceMeshType, Results } from '@mediapipe/face_mesh';
 
+/** Raw landmarks exposed each frame for downstream analysis hooks */
+export interface BodyLandmarks {
+    /** MediaPipe FaceMesh 478 landmarks (includes iris) */
+    faceLandmarks: { x: number; y: number; z: number }[] | null;
+    /** MediaPipe Pose 33 landmarks */
+    poseLandmarks: { x: number; y: number; z: number; visibility?: number }[] | null;
+    timestamp: number;
+}
+
 // Approximates whether the user is looking at the camera based on iris/pupil positioning relative to eye corners
-export function useEyeContact(videoRef: any, canvasRef?: React.RefObject<HTMLCanvasElement | null>) {
+export function useEyeContact(
+    videoRef: any,
+    canvasRef?: React.RefObject<HTMLCanvasElement | null>,
+    /** When true, processes a <video> element playing a file instead of starting a webcam */
+    videoMode: boolean = false,
+) {
     const [eyeContactScore, setEyeContactScore] = useState<number>(100);
     const faceMeshRef = useRef<FaceMeshType | null>(null);
     const cameraRef = useRef<cam.Camera | null>(null);
+    /** Exposed ref holding the latest landmarks for external consumption */
+    const landmarksRef = useRef<BodyLandmarks>({ faceLandmarks: null, poseLandmarks: null, timestamp: 0 });
 
     useEffect(() => {
         // Determine the video element from either a ReactWebcam ref or a raw <video> ref
@@ -34,8 +50,14 @@ export function useEyeContact(videoRef: any, canvasRef?: React.RefObject<HTMLCan
         const FACEMESH_LEFT_IRIS = faceMeshModule.FACEMESH_LEFT_IRIS || (window as any).FACEMESH_LEFT_IRIS;
         const POSE_CONNECTIONS = poseModule.POSE_CONNECTIONS || (window as any).POSE_CONNECTIONS;
 
-        if (!FaceMeshConstructor || !CameraConstructor || !PoseConstructor) {
+        if (!FaceMeshConstructor || !PoseConstructor) {
             console.warn("MediaPipe failed to load on this environment.");
+            return;
+        }
+
+        // In video mode we don't need Camera utility at all
+        if (!videoMode && !CameraConstructor) {
+            console.warn("MediaPipe Camera utility failed to load.");
             return;
         }
 
@@ -65,6 +87,12 @@ export function useEyeContact(videoRef: any, canvasRef?: React.RefObject<HTMLCan
 
         let activeCanvasCtx: CanvasRenderingContext2D | null = null;
 
+        // ── Audience cut detection (videoMode only) ────────────────────────
+        // Track running average face size to detect camera cuts to audience
+        let avgFaceSize = 0;
+        let faceSizeCount = 0;
+        const FACE_SIZE_TOLERANCE = 0.30; // Skip if face is <30% of average
+
         const onFaceResults = (results: Results) => {
             // --- DRAWING LOGIC ---
             if (canvasRef?.current && videoElement) {
@@ -93,8 +121,44 @@ export function useEyeContact(videoRef: any, canvasRef?: React.RefObject<HTMLCan
             }
             // --- END DRAWING LOGIC ---
 
+            // ── Audience cut filtering (videoMode) ─────────────────────────
+            if (videoMode && results.multiFaceLandmarks) {
+                // Filter 1: Skip frames with != 1 face (audience shots show multiple or zero)
+                if (results.multiFaceLandmarks.length !== 1) {
+                    // Don't update landmarks — downstream hooks keep last valid sample
+                    return;
+                }
+
+                // Filter 2: Face size consistency — measure bounding box of face
+                const lm = results.multiFaceLandmarks[0];
+                const xs = lm.map(p => p.x);
+                const ys = lm.map(p => p.y);
+                const faceWidth = Math.max(...xs) - Math.min(...xs);
+                const faceHeight = Math.max(...ys) - Math.min(...ys);
+                const faceSize = faceWidth * faceHeight;
+
+                if (faceSizeCount > 10) {
+                    // Face is too small compared to running average → probably audience/wide shot
+                    if (faceSize < avgFaceSize * FACE_SIZE_TOLERANCE) {
+                        return; // Skip this frame
+                    }
+                }
+
+                // Update running average (exponential moving average)
+                faceSizeCount++;
+                avgFaceSize = avgFaceSize === 0
+                    ? faceSize
+                    : avgFaceSize * 0.95 + faceSize * 0.05;
+            }
+
+            // Store face landmarks in ref for downstream analysis
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 const landmarks = results.multiFaceLandmarks[0];
+                landmarksRef.current = {
+                    ...landmarksRef.current,
+                    faceLandmarks: landmarks.map(l => ({ x: l.x, y: l.y, z: l.z })),
+                    timestamp: performance.now(),
+                };
 
                 const leftIris = landmarks[468];
                 const rightIris = landmarks[473];
@@ -115,11 +179,25 @@ export function useEyeContact(videoRef: any, canvasRef?: React.RefObject<HTMLCan
                     setEyeContactScore(prev => Math.round((prev * 0.8) + (score * 0.2)));
                 }
             } else {
+                landmarksRef.current = { ...landmarksRef.current, faceLandmarks: null };
                 setEyeContactScore(0);
             }
         };
 
         const onPoseResults = (results: any) => {
+            // Store pose landmarks in ref for downstream analysis
+            if (results.poseLandmarks) {
+                landmarksRef.current = {
+                    ...landmarksRef.current,
+                    poseLandmarks: results.poseLandmarks.map((l: any) => ({
+                        x: l.x, y: l.y, z: l.z, visibility: l.visibility
+                    })),
+                    timestamp: performance.now(),
+                };
+            } else {
+                landmarksRef.current = { ...landmarksRef.current, poseLandmarks: null };
+            }
+
             if (activeCanvasCtx && results.poseLandmarks) {
                 drawConnectors(activeCanvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
                 drawLandmarks(activeCanvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
@@ -132,26 +210,47 @@ export function useEyeContact(videoRef: any, canvasRef?: React.RefObject<HTMLCan
         faceMeshRef.current!.onResults(onFaceResults);
         poseObj.onResults(onPoseResults);
 
-        cameraRef.current = new CameraConstructor(videoElement, {
-            onFrame: async () => {
-                if (videoElement) {
-                    if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
-                    if (currentPose) await currentPose.send({ image: videoElement });
-                }
-            },
-            width: 640,
-            height: 480
-        });
+        let rafId: number | null = null;
 
-        cameraRef.current!.start();
+        if (videoMode) {
+            // VIDEO MODE: Use requestAnimationFrame to process frames while video plays
+            const processVideoFrame = async () => {
+                if (videoElement && !videoElement.paused && !videoElement.ended && videoElement.readyState >= 2) {
+                    try {
+                        if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
+                        if (currentPose) await currentPose.send({ image: videoElement });
+                    } catch (e) {
+                        // Silently handle frame processing errors
+                    }
+                }
+                rafId = requestAnimationFrame(processVideoFrame);
+            };
+            // Start the loop — it will idle when video is paused
+            rafId = requestAnimationFrame(processVideoFrame);
+        } else {
+            // LIVE MODE: Use MediaPipe Camera utility (starts getUserMedia)
+            cameraRef.current = new CameraConstructor(videoElement, {
+                onFrame: async () => {
+                    if (videoElement) {
+                        if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
+                        if (currentPose) await currentPose.send({ image: videoElement });
+                    }
+                },
+                width: 640,
+                height: 480
+            });
+
+            cameraRef.current!.start();
+        }
 
         return () => {
+            if (rafId !== null) cancelAnimationFrame(rafId);
             cameraRef.current?.stop();
             faceMeshRef.current?.close();
             currentPose?.close();
         };
 
-    }, [videoRef, canvasRef]);
+    }, [videoRef, canvasRef, videoMode]);
 
-    return eyeContactScore;
+    return { eyeContactScore, landmarksRef };
 }
