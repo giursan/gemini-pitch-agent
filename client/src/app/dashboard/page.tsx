@@ -9,31 +9,31 @@ export default function Dashboard() {
             </header>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div className="bg-neutral-900 border border-white/5 p-6 rounded-2xl shadow-lg flex flex-col items-center justify-center">
+                <div className="bg-neutral-900 border border-white/5 p-6 rounded-lg shadow-lg flex flex-col items-center justify-center">
                     <h3 className="text-sm font-semibold uppercase tracking-widest text-neutral-500 mb-2">Overall Score</h3>
                     <span className="text-5xl font-bold text-emerald-400">82<span className="text-xl text-neutral-500">/100</span></span>
                 </div>
-                <div className="bg-neutral-900 border border-white/5 p-6 rounded-2xl shadow-lg flex flex-col items-center justify-center">
+                <div className="bg-neutral-900 border border-white/5 p-6 rounded-lg shadow-lg flex flex-col items-center justify-center">
                     <h3 className="text-sm font-semibold uppercase tracking-widest text-neutral-500 mb-2">Avg. Pacing</h3>
                     <span className="text-4xl font-bold text-white">142 <span className="text-xl text-neutral-500 font-normal">WPM</span></span>
                     <span className="text-xs text-emerald-400 mt-2">Perfect Range</span>
                 </div>
-                <div className="bg-neutral-900 border border-white/5 p-6 rounded-2xl shadow-lg flex flex-col items-center justify-center">
+                <div className="bg-neutral-900 border border-white/5 p-6 rounded-lg shadow-lg flex flex-col items-center justify-center">
                     <h3 className="text-sm font-semibold uppercase tracking-widest text-neutral-500 mb-2">Eye Contact</h3>
                     <span className="text-4xl font-bold text-white">68%</span>
                     <span className="text-xs text-amber-400 mt-2">Needs Improvement</span>
                 </div>
             </div>
 
-            <div className="bg-neutral-900 border border-white/5 p-8 rounded-2xl shadow-lg mb-8">
+            <div className="bg-neutral-900 border border-white/5 p-8 rounded-lg shadow-lg mb-8">
                 <h2 className="text-xl font-semibold mb-6">Timeline Analysis</h2>
                 {/* Placeholder for Recharts timeline graph */}
-                <div className="h-64 w-full bg-neutral-800 rounded-xl border border-white/5 flex items-center justify-center">
+                <div className="h-64 w-full bg-neutral-800 rounded-md border border-white/5 flex items-center justify-center">
                     <p className="text-neutral-500">Multimodal Telemetry Graph (WPM vs Time) renders here</p>
                 </div>
             </div>
 
-            <div className="bg-neutral-900 border border-white/5 p-8 rounded-2xl shadow-lg">
+            <div className="bg-neutral-900 border border-white/5 p-8 rounded-lg shadow-lg">
                 <h2 className="text-xl font-semibold mb-6">The Shark's Feedback (Content Coach)</h2>
                 <ul className="space-y-4">
                     <li className="flex gap-4">

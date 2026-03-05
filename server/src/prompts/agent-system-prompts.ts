@@ -127,24 +127,28 @@ const updateMetricsDeclaration: FunctionDeclaration = {
     parameters: {
         type: Type.OBJECT,
         properties: {
+            eyeContact: {
+                type: Type.NUMBER,
+                description: 'Estimated eye contact percentage (0-100).',
+            },
             pacing: {
-                type: Type.INTEGER,
+                type: Type.NUMBER,
                 description: 'Estimated words per minute (WPM). Target: 130-160.',
             },
             filler: {
-                type: Type.INTEGER,
+                type: Type.NUMBER,
                 description: 'Estimated filler words per minute (um, uh, like).',
             },
             contentScore: {
-                type: Type.INTEGER,
+                type: Type.NUMBER,
                 description: 'Content quality score 0-100 from the Content Agent (argument strength, evidence, structure).',
             },
             deliveryScore: {
-                type: Type.INTEGER,
+                type: Type.NUMBER,
                 description: 'Delivery quality score 0-100 from the Delivery Agent (pacing, clarity, vocal variety).',
             },
         },
-        required: ['pacing', 'filler', 'contentScore', 'deliveryScore'],
+        required: ['pacing', 'filler'],
     },
 };
 

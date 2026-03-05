@@ -30,24 +30,28 @@ export class GeminiLiveSession {
     private session: GenAISession | null = null;
     private onMessageCallback: (msg: LiveServerMessage) => void;
     private feedbackMode: 'silent' | 'shark' = 'silent';
+    private enableSpeech: boolean = true;
 
     // Timeline
     private timeline: TimelineEvent[] = [];
     private cvSnapshots: Record<string, any>[] = [];
     private sessionId: string;
     private startedAt: number = 0;
+    private lastInjectedTelemetryTs: number = 0;
 
     private static readonly MODEL = process.env.GEMINI_MODEL
-        || 'gemini-live-2.5-flash-preview';
+        || 'models/gemini-2.5-flash-native-audio-latest';
 
     constructor(
         sessionId: string,
         onMessageCallback: (msg: LiveServerMessage) => void,
         feedbackMode: 'silent' | 'shark' = 'silent',
+        enableSpeech: boolean = true
     ) {
         this.sessionId = sessionId;
         this.onMessageCallback = onMessageCallback;
         this.feedbackMode = feedbackMode;
+        this.enableSpeech = enableSpeech;
     }
 
     /**
@@ -56,7 +60,12 @@ export class GeminiLiveSession {
     public async connect(): Promise<void> {
         console.log(`[${this.sessionId}] Connecting to Gemini Live API (mode: ${this.feedbackMode})...`);
         this.startedAt = Date.now();
-        this.logEvent('system', { message: 'Session started', feedbackMode: this.feedbackMode });
+        this.logEvent('system', { message: 'Session started', feedbackMode: this.feedbackMode, enableSpeech: this.enableSpeech });
+
+        if (!this.enableSpeech) {
+            console.log(`[${this.sessionId}] Speech agent disabled. Bypassing Gemini WS connection.`);
+            return;
+        }
 
         const ai = new GoogleGenAI({
             apiKey: process.env.GOOGLE_GENAI_API_KEY,
@@ -67,21 +76,25 @@ export class GeminiLiveSession {
             ? `\n\nYou are in SHARK MODE. You MUST speak out loud to give feedback and interrupt with tough questions. Be direct and challenging.`
             : `\n\nYou are in SILENT COACH MODE. Do NOT speak or generate audio. Use ONLY the emit_alert and update_metrics tool calls to provide feedback silently through the UI.`;
 
+        const transcriptionInstruction = `\n\nCRITICAL: You are receiving a live audio stream of the user speaking. You must actively listen to the presentation. You must regularly evaluate their pacing (Words Per Minute), count their filler words ("um", "uh", "like"), and grade their delivery and content. You MUST call the update_metrics tool frequently (every 10-15 seconds) to update the UI dashboard with these metrics. This is mandatory for the experience to work.`;
+
+        const finalSystemInstruction = META_ORCHESTRATOR_PROMPT + modeInstruction + transcriptionInstruction;
+
         const config: LiveConnectConfig = {
-            responseModalities: this.feedbackMode === 'shark'
-                ? [Modality.AUDIO, Modality.TEXT]
-                : [Modality.TEXT],
-            speechConfig: {
+            responseModalities: ['AUDIO'] as any,
+            systemInstruction: { parts: [{ text: finalSystemInstruction }] },
+            tools: getGeminiTools(),
+        };
+
+        if (this.feedbackMode === 'shark') {
+            config.speechConfig = {
                 voiceConfig: {
                     prebuiltVoiceConfig: {
                         voiceName: 'Aoede',
                     },
                 },
-            },
-            systemInstruction: META_ORCHESTRATOR_PROMPT + modeInstruction,
-            tools: getGeminiTools(),
-            outputAudioTranscription: {},
-        };
+            };
+        }
 
         this.session = await ai.live.connect({
             model: GeminiLiveSession.MODEL,
@@ -118,8 +131,8 @@ export class GeminiLiveSession {
                     console.error(`[${this.sessionId}] Gemini Live error:`, e.error);
                     this.logEvent('system', { message: 'WebSocket error', error: String(e.error) });
                 },
-                onclose: () => {
-                    console.log(`[${this.sessionId}] Gemini Live WebSocket closed.`);
+                onclose: (e: any) => {
+                    console.log(`[${this.sessionId}] Gemini Live WebSocket closed. Code: ${e?.code}, Reason: ${e?.reason}`);
                 },
             },
         });
@@ -134,7 +147,10 @@ export class GeminiLiveSession {
         this.logEvent('cv_telemetry', telemetry);
 
         // Inject structured CV data into Gemini's conversation context
-        if (this.session) {
+        // Inject structured CV data into Gemini's conversation context only every 10 seconds
+        // to avoid locking the conversation turn indefinitely and blowing up tokens
+        if (this.session && (Date.now() - this.lastInjectedTelemetryTs > 10000)) {
+            this.lastInjectedTelemetryTs = Date.now();
             const report = [
                 `[AGENT_TELEMETRY]`,
                 `eye_contact=${telemetry.eyeContact ?? '--'}%`,
@@ -151,7 +167,7 @@ export class GeminiLiveSession {
 
             this.session.sendClientContent({
                 turns: [{ role: 'user', parts: [{ text: report }] }],
-                turnComplete: false,
+                turnComplete: true,
             });
         }
     }
@@ -182,9 +198,22 @@ export class GeminiLiveSession {
     }
 
     public sendVideoFrame(jpegData: string): void {
+        // Disabled: gemini-2.5-flash-native-audio models do not support video modality.
+        // We rely on the CV telemetry injected via logCvTelemetry instead.
+        /*
         if (!this.session) return;
         this.session.sendRealtimeInput({
             video: { mimeType: 'image/jpeg', data: jpegData },
+        });
+        */
+    }
+
+    public sendTextMessage(text: string): void {
+        if (!this.session) return;
+        this.logEvent('system', { message: `User chat: ${text}` });
+        this.session.sendClientContent({
+            turns: [{ role: 'user', parts: [{ text }] }],
+            turnComplete: true,
         });
     }
 

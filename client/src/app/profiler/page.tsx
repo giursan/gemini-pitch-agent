@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import Link from 'next/link';
+import { Download, Play, StopCircle, Video, ChevronLeft } from 'lucide-react';
 import { useEyeContact } from '../../hooks/useEyeContact';
-import { useBodyLanguageAnalysis, TED_BENCHMARKS, type BodyLanguageMetrics } from '../../hooks/useBodyLanguageAnalysis';
+import { useBodyLanguageAnalysis, type BodyLanguageMetrics } from '../../hooks/useBodyLanguageAnalysis';
 import { buildBenchmarkProfile, saveBenchmarkProfile, loadBenchmarkProfile } from '../../hooks/useTEDBenchmarks';
 
 interface ProfileResult {
@@ -23,13 +25,10 @@ export default function ProfilerPage() {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const samplesRef = useRef<BodyLanguageMetrics[]>([]);
-    const rafRef = useRef<number | null>(null);
 
-    // Reuse our existing tracking pipeline — videoMode=true skips Camera utility (no getUserMedia)
     const { eyeContactScore, landmarksRef } = useEyeContact(videoRef, canvasRef, true);
-    const { metrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, isProcessing);
+    const { metrics } = useBodyLanguageAnalysis(landmarksRef, isProcessing);
 
-    // Collect samples while processing
     useEffect(() => {
         if (isProcessing && metrics) {
             setCurrentMetrics(metrics);
@@ -37,7 +36,6 @@ export default function ProfilerPage() {
         }
     }, [isProcessing, metrics]);
 
-    // Track video progress
     useEffect(() => {
         if (!isProcessing || !videoRef.current) return;
 
@@ -67,10 +65,8 @@ export default function ProfilerPage() {
         setIsProcessing(true);
         setProgress(0);
 
-        // Play the video — MediaPipe Camera util inside useEyeContact
-        // will automatically process frames as the video plays
         video.currentTime = 0;
-        video.playbackRate = 1; // Real-time for accurate tracking
+        video.playbackRate = 1;
         video.play();
 
         video.onended = () => {
@@ -92,7 +88,6 @@ export default function ProfilerPage() {
         const samples = samplesRef.current;
         if (samples.length === 0) return;
 
-        // Average all samples
         const avg: BodyLanguageMetrics = {
             postureAngle: Math.round(samples.reduce((s, m) => s + m.postureAngle, 0) / samples.length),
             isGoodPosture: samples.filter(m => m.isGoodPosture).length / samples.length > 0.5,
@@ -118,7 +113,6 @@ export default function ProfilerPage() {
     const exportBenchmarks = () => {
         if (results.length === 0) return;
 
-        // Build full statistical benchmark profile from all profiled videos
         const profile = buildBenchmarkProfile(
             results.map(r => ({
                 name: r.name,
@@ -126,10 +120,8 @@ export default function ProfilerPage() {
             }))
         );
 
-        // Save to localStorage for use in the main app
         saveBenchmarkProfile(profile);
 
-        // Also export as JSON file for reference
         const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -138,30 +130,29 @@ export default function ProfilerPage() {
         a.click();
         URL.revokeObjectURL(url);
 
-        alert(`✅ Benchmark profile saved!\n${profile.videosAnalyzed.length} videos, ${profile.totalSamples} samples.\nYour live sessions will now score against these TED benchmarks.`);
+        alert(`✅ Calibration successful!\nUsed ${profile.videosAnalyzed.length} benchmark sources.`);
     };
 
     return (
-        <div className="min-h-screen bg-neutral-950 text-neutral-100 font-[family-name:var(--font-geist-sans)]">
-            <header className="px-6 py-4 flex items-center justify-between border-b border-white/10">
-                <div>
-                    <h1 className="text-xl font-semibold tracking-tight text-white/90">
-                        Aura <span className="text-white/50 font-normal">TED Profiler</span>
-                    </h1>
-                    <p className="text-xs text-neutral-500 mt-0.5">
-                        Scan presentation videos to generate empirical body language benchmarks
-                    </p>
-                </div>
-                <a href="/" className="text-sm text-neutral-400 hover:text-white transition-colors">
-                    ← Back to Mentor
-                </a>
+        <div className="min-h-[100vh] bg-neutral-50 flex flex-col font-sans selection:bg-google-blue/10">
+            {/* Local Header */}
+            <header className="px-8 py-5 flex items-center justify-between bg-white border-b border-neutral-200">
+                <h1 className="text-xl font-bold text-neutral-900 leading-none">
+                    TED Profiler
+                </h1>
+                <Link
+                    href="/"
+                    className="google-button flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-bold bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-50 transition-all active:scale-[0.98]"
+                >
+                    <ChevronLeft className="w-4 h-4" /> BACK TO DASHBOARD
+                </Link>
             </header>
 
-            <main className="max-w-7xl mx-auto p-6 flex flex-col lg:flex-row gap-6">
-                {/* Left: Video + Controls */}
-                <section className="flex-1 flex flex-col gap-4">
-                    {/* Upload Zone */}
-                    <div className="bg-neutral-900 border border-dashed border-white/10 rounded-2xl p-6 text-center">
+            <main className="max-w-7xl mx-auto p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 w-full">
+                {/* Left Column: Input and Video */}
+                <div className="lg:col-span-8 space-y-8">
+                    {/* Upload Card */}
+                    <div className={`shadow-sm bg-white rounded-lg p-8 border-2 border-dashed transition-all duration-300 ${videoSrc ? 'border-google-blue/40' : 'border-neutral-200 hover:border-google-blue/20'}`}>
                         <input
                             type="file"
                             accept="video/*"
@@ -171,20 +162,22 @@ export default function ProfilerPage() {
                         />
                         <label
                             htmlFor="video-upload"
-                            className="cursor-pointer block"
+                            className="cursor-pointer flex flex-col items-center gap-4 text-center group"
                         >
-                            <div className="text-3xl mb-2">🎬</div>
-                            <p className="text-neutral-400 text-sm">
-                                {videoName || 'Drop a TED talk video or click to upload'}
-                            </p>
-                            <p className="text-neutral-600 text-xs mt-1">
-                                MP4, WebM, MOV supported
-                            </p>
+                            <div className="w-16 h-16 rounded-lg bg-neutral-50 border border-neutral-100 flex items-center justify-center group-hover:scale-110 group-hover:bg-google-blue/5 transition-all"><Video className="w-8 h-8 text-neutral-400" /></div>
+                            <div>
+                                <p className="text-lg font-bold text-neutral-900 leading-none">
+                                    {videoName || 'Drop TED source video or upload'}
+                                </p>
+                                <p className="text-xs font-medium text-neutral-400 mt-2 uppercase tracking-widest">
+                                    Calibration requires high-quality MP4 or WebM
+                                </p>
+                            </div>
                         </label>
                     </div>
 
-                    {/* Video Player with Overlay */}
-                    <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video ring-1 ring-white/10 shadow-2xl">
+                    {/* Video Analysis Station */}
+                    <div className="relative rounded-lg overflow-hidden bg-neutral-900 aspect-video google-shadow border border-white/5 ring-8 ring-neutral-50 shadow-2xl">
                         <video
                             ref={videoRef}
                             src={videoSrc || undefined}
@@ -195,137 +188,111 @@ export default function ProfilerPage() {
                         />
                         <canvas
                             ref={canvasRef}
-                            className="absolute inset-0 w-full h-full z-10 pointer-events-none object-contain"
+                            className="absolute inset-0 w-full h-full z-10 pointer-events-none object-contain opacity-60"
                         />
+
+                        {/* Scanning Overlay */}
                         {isProcessing && (
-                            <div className="absolute top-4 left-4 flex gap-2">
-                                <span className="px-3 py-1 bg-black/60 backdrop-blur-md rounded-full text-xs font-mono font-medium text-amber-400 border border-amber-500/30 animate-pulse">
-                                    ● SCANNING
-                                </span>
-                                <span className="px-3 py-1 bg-black/60 backdrop-blur-md rounded-full text-xs font-mono font-medium text-blue-400 border border-blue-500/30">
-                                    {Math.round(progress)}%
-                                </span>
+                            <div className="absolute top-6 left-6 flex gap-3 z-20">
+                                <div className="px-4 py-2 bg-google-red text-white rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-google-red/20 animate-pulse">
+                                    <span className="w-2 h-2 rounded-full bg-white" />
+                                    SCANNING FRAME
+                                </div>
+                                <div className="px-4 py-2 bg-google-blue text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg shadow-google-blue/20">
+                                    {Math.round(progress)}% COMPLETE
+                                </div>
                             </div>
                         )}
                     </div>
 
-                    {/* Progress Bar */}
-                    {isProcessing && (
-                        <div className="w-full bg-neutral-800 rounded-full h-1.5">
-                            <div
-                                className="bg-amber-500 h-1.5 rounded-full transition-all duration-300"
-                                style={{ width: `${progress}%` }}
-                            />
-                        </div>
-                    )}
+                    {/* Progress Bar (Material Style) */}
+                    <div className="bg-neutral-100 rounded-full h-3 p-0.5 overflow-hidden">
+                        <div
+                            className="bg-google-blue h-full rounded-full transition-all duration-300 shadow-sm"
+                            style={{ width: `${progress}%` }}
+                        />
+                    </div>
 
-                    {/* Controls */}
-                    <div className="flex gap-3">
+                    {/* Control Bar */}
+                    <div className="flex gap-4">
                         <button
                             onClick={isProcessing ? stopProfiling : startProfiling}
                             disabled={!videoSrc}
-                            className={`flex-1 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${!videoSrc
-                                ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed'
+                            className={`flex flex-1 items-center justify-center gap-2 px-8 py-4 rounded-lg text-sm font-bold tracking-tight transition-all active:scale-[0.98] ${!videoSrc
+                                ? 'bg-neutral-100 text-neutral-400 cursor-not-allowed'
                                 : isProcessing
-                                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                                    : 'bg-amber-500 text-black hover:bg-amber-400'
+                                    ? 'bg-google-red text-white shadow-lg shadow-google-red/20'
+                                    : 'bg-google-blue text-white shadow-lg shadow-google-blue/20 hover:bg-primary-hover'
                                 }`}
                         >
-                            {isProcessing ? '⏹ Stop Scan' : '▶ Start Scan'}
+                            {isProcessing ? <><StopCircle className="w-5 h-5" /> STOP CALIBRATION</> : <><Play className="w-5 h-5" /> INITIATE SCAN</>}
                         </button>
 
                         {results.length > 0 && (
                             <button
                                 onClick={exportBenchmarks}
-                                className="px-4 py-3 rounded-xl text-sm font-medium bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+                                className="flex items-center gap-2 px-10 py-4 rounded-lg text-sm font-bold bg-google-green text-white shadow-lg shadow-google-green/20 hover:opacity-90 transition-all active:scale-[0.98]"
                             >
-                                📥 Save & Export Benchmarks
+                                <Download className="w-5 h-5" /> SYNC & EXPORT
                             </button>
                         )}
                     </div>
+                </div>
 
-                    {/* Calibration status */}
-                    {(() => {
-                        const existing = typeof window !== 'undefined' ? loadBenchmarkProfile() : null;
-                        return existing ? (
-                            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3 text-xs text-emerald-400">
-                                ✅ Calibrated against {existing.videosAnalyzed.length} TED talk(s) ({existing.totalSamples} samples)
-                            </div>
-                        ) : (
-                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 text-xs text-amber-400">
-                                ⚠ No benchmarks saved yet — scan TED talks and click &quot;Save &amp; Export&quot;
-                            </div>
-                        );
-                    })()}
-                </section>
-
-                {/* Right: Live Metrics + Results */}
-                <aside className="w-full lg:w-96 flex flex-col gap-4">
-                    {/* Live Metrics During Scan */}
+                {/* Right Column: Results & Info */}
+                <div className="lg:col-span-4 space-y-6">
+                    {/* Live Telemetry Card */}
                     {isProcessing && currentMetrics && (
-                        <div className="bg-neutral-900 border border-white/5 p-5 rounded-2xl shadow-lg">
-                            <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-500 mb-4">
-                                Live Scan Metrics
+                        <div className="bg-white border border-neutral-200 p-7 rounded-lg shadow-sm">
+                            <h2 className="text-[10px] font-black uppercase tracking-widest text-google-blue mb-6">
+                                Live Neural Output
                             </h2>
-                            <div className="space-y-2 text-sm">
-                                <MetricRow label="Posture" value={`${currentMetrics.postureAngle}°`} good={currentMetrics.isGoodPosture} />
-                                <MetricRow label="Shoulder Balance" value={`${Math.round(currentMetrics.shoulderSymmetry * 100)}%`} good={currentMetrics.shoulderSymmetry > 0.8} />
-                                <MetricRow label="Stability" value={`${Math.round(currentMetrics.bodyStability * 100)}%`} good={currentMetrics.bodyStability > 0.7} />
-                                <MetricRow label="Gestures/min" value={`${currentMetrics.gesturesPerMin}`} good={currentMetrics.gesturesPerMin >= 10} />
-                                <MetricRow label="Hand Visibility" value={`${Math.round(currentMetrics.handVisibility * 100)}%`} good={currentMetrics.handVisibility > 0.6} />
-                                <MetricRow label="Smile" value={`${Math.round(currentMetrics.smileScore * 100)}%`} good={currentMetrics.smileScore > 0.3} />
-                                <MetricRow label="Expressiveness" value={`${Math.round(currentMetrics.expressiveness * 100)}%`} good={currentMetrics.expressiveness > 0.3} />
-                                <MetricRow label="Eye Contact" value={`${eyeContactScore}%`} good={eyeContactScore > 50} />
-                                <div className="pt-2 border-t border-white/5 flex justify-between">
-                                    <span className="text-neutral-300 font-semibold">Overall</span>
-                                    <span className={`font-mono font-bold ${currentMetrics.overallScore >= 70 ? 'text-emerald-400' :
-                                        currentMetrics.overallScore >= 40 ? 'text-amber-400' : 'text-red-400'
-                                        }`}>
-                                        {currentMetrics.overallScore}/100
+                            <div className="space-y-4">
+                                <MetricRow label="POSTURE ANGLE" value={`${currentMetrics.postureAngle}°`} good={currentMetrics.isGoodPosture} />
+                                <MetricRow label="SYMMETRY" value={`${Math.round(currentMetrics.shoulderSymmetry * 100)}%`} good={currentMetrics.shoulderSymmetry > 0.8} />
+                                <MetricRow label="STABILITY" value={`${Math.round(currentMetrics.bodyStability * 100)}%`} good={currentMetrics.bodyStability > 0.7} />
+                                <MetricRow label="GESTURE RATE" value={`${currentMetrics.gesturesPerMin}`} good={currentMetrics.gesturesPerMin >= 10} />
+                                <MetricRow label="EXPRESSION" value={`${Math.round(currentMetrics.expressiveness * 100)}%`} good={currentMetrics.expressiveness > 0.3} />
+                                <MetricRow label="RECEPTION" value={`${eyeContactScore}%`} good={eyeContactScore > 50} />
+                                <div className="pt-4 border-t border-border/40 mt-2 flex justify-between items-baseline">
+                                    <span className="text-[9px] font-black text-neutral-400 uppercase tracking-widest">Aggregate PR</span>
+                                    <span className={`text-2xl font-black ${currentMetrics.overallScore >= 70 ? 'text-google-green' : 'text-google-blue'}`}>
+                                        {currentMetrics.overallScore}
                                     </span>
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Completed Results */}
+                    {/* Results Portfolio */}
                     {results.length > 0 && (
-                        <div className="bg-neutral-900 border border-white/5 p-5 rounded-2xl shadow-lg">
-                            <h2 className="text-sm font-semibold uppercase tracking-widest text-emerald-500 mb-4">
-                                Profiled Videos ({results.length})
+                        <div className="bg-white border border-neutral-200 p-7 rounded-lg shadow-sm max-h-[500px] overflow-y-auto">
+                            <h2 className="text-[10px] font-black uppercase tracking-widest text-google-green mb-6">
+                                Portfolio ({results.length})
                             </h2>
                             <div className="space-y-4">
                                 {results.map((r, i) => (
-                                    <div key={i} className="border border-white/5 rounded-xl p-4 space-y-2">
-                                        <div className="flex justify-between items-start">
-                                            <div>
-                                                <p className="text-sm font-medium text-white truncate max-w-[200px]">{r.name}</p>
-                                                <p className="text-xs text-neutral-500">
-                                                    {Math.round(r.duration)}s • {r.samples.length} samples
+                                    <div key={i} className="bg-neutral-50 rounded-lg p-5 border border-neutral-200 hover:border-google-green/40 transition-colors">
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div className="min-w-0 pr-4">
+                                                <p className="text-xs font-bold text-neutral-900 truncate leading-tight mb-1">{r.name}</p>
+                                                <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-tighter">
+                                                    {Math.round(r.duration)}s • {r.samples.length} SAMPLES
                                                 </p>
                                             </div>
-                                            <span className={`font-mono font-bold text-lg ${r.avgMetrics.overallScore >= 70 ? 'text-emerald-400' :
-                                                r.avgMetrics.overallScore >= 40 ? 'text-amber-400' : 'text-red-400'
+                                            <div className={`px-2 py-1 rounded text-[10px] font-black ${r.avgMetrics.overallScore >= 70 ? 'bg-google-green text-white' : 'bg-google-blue text-white'
                                                 }`}>
                                                 {r.avgMetrics.overallScore}
-                                            </span>
+                                            </div>
                                         </div>
-                                        <div className="text-xs space-y-1 text-neutral-400">
-                                            <div className="flex justify-between">
-                                                <span>Posture</span>
-                                                <span className="font-mono">{r.avgMetrics.postureAngle}°</span>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="bg-white p-2 rounded-md text-center border border-neutral-200">
+                                                <span className="block text-[8px] font-bold text-neutral-400 leading-none">POSTURE</span>
+                                                <span className="text-[10px] font-bold text-neutral-800">{r.avgMetrics.postureAngle}°</span>
                                             </div>
-                                            <div className="flex justify-between">
-                                                <span>Gestures/min</span>
-                                                <span className="font-mono">{r.avgMetrics.gesturesPerMin}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span>Stability</span>
-                                                <span className="font-mono">{Math.round(r.avgMetrics.bodyStability * 100)}%</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span>Smile</span>
-                                                <span className="font-mono">{Math.round(r.avgMetrics.smileScore * 100)}%</span>
+                                            <div className="bg-white p-2 rounded-md text-center border border-neutral-200">
+                                                <span className="block text-[8px] font-bold text-neutral-400 leading-none">GESTURES</span>
+                                                <span className="text-[10px] font-bold text-neutral-800">{r.avgMetrics.gesturesPerMin}/M</span>
                                             </div>
                                         </div>
                                     </div>
@@ -334,28 +301,38 @@ export default function ProfilerPage() {
                         </div>
                     )}
 
-                    {/* Info Card */}
-                    <div className="bg-neutral-900/50 border border-white/5 p-4 rounded-2xl">
-                        <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-500 mb-2">How It Works</h3>
-                        <ol className="text-xs text-neutral-400 space-y-1 list-decimal list-inside">
-                            <li>Upload a TED talk video (downloaded MP4)</li>
-                            <li>Hit &quot;Start Scan&quot; — MediaPipe processes each frame</li>
-                            <li>Metrics are collected in real-time as the video plays</li>
-                            <li>Scan multiple videos, then export averaged benchmarks</li>
-                        </ol>
+                    {/* Methodology Panel */}
+                    <div className="bg-neutral-50 border border-neutral-200 p-6 rounded-lg">
+                        <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-400 mb-4 flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-google-blue" />
+                            Protocol
+                        </h3>
+                        <ul className="text-[11px] font-medium text-neutral-500 space-y-3">
+                            <li className="flex gap-3">
+                                <span className="text-google-blue">01</span>
+                                <span>Feed benchmark video into Neural Tracker (MP)</span>
+                            </li>
+                            <li className="flex gap-3">
+                                <span className="text-google-blue">02</span>
+                                <span>Calibrate telemetry against 46 key landmarks</span>
+                            </li>
+                            <li className="flex gap-3">
+                                <span className="text-google-blue">03</span>
+                                <span>Aura accumulates statistical z-scores (Local)</span>
+                            </li>
+                        </ul>
                     </div>
-                </aside>
+                </div>
             </main>
         </div>
     );
 }
 
-// Simple metric row component
 function MetricRow({ label, value, good }: { label: string; value: string; good: boolean }) {
     return (
-        <div className="flex justify-between items-center border-b border-white/5 pb-1.5">
-            <span className="text-neutral-400">{label}</span>
-            <span className={`font-mono font-bold ${good ? 'text-emerald-400' : 'text-amber-400'}`}>
+        <div className="flex justify-between items-center py-2 border-b border-neutral-200">
+            <span className="text-[10px] font-bold text-neutral-400 tracking-tight">{label}</span>
+            <span className={`text-[11px] font-black ${good ? 'text-google-green' : 'text-google-yellow'}`}>
                 {value}
             </span>
         </div>

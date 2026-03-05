@@ -17,6 +17,7 @@ export function useEyeContact(
     canvasRef?: React.RefObject<HTMLCanvasElement | null>,
     /** When true, processes a <video> element playing a file instead of starting a webcam */
     videoMode: boolean = false,
+    features: { eyeContact: boolean; posture: boolean } = { eyeContact: true, posture: true }
 ) {
     const [eyeContactScore, setEyeContactScore] = useState<number>(100);
     const faceMeshRef = useRef<FaceMeshType | null>(null);
@@ -61,29 +62,32 @@ export function useEyeContact(
             return;
         }
 
-        faceMeshRef.current = new FaceMeshConstructor({
-            locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-        });
+        if (features.eyeContact) {
+            faceMeshRef.current = new FaceMeshConstructor({
+                locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+            });
 
-        faceMeshRef.current!.setOptions({
-            maxNumFaces: 1,
-            refineLandmarks: true, // Need this for iris tracking
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
+            faceMeshRef.current!.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+        }
 
-        // POSE INIT
-        const poseObj = new PoseConstructor({
-            locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-        });
-        poseObj.setOptions({
-            modelComplexity: 1,
-            smoothLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
-        // Save to a local variable for the cleanup closure, avoid ref mutation issues
-        let currentPose = poseObj;
+        let currentPose: any = null;
+        if (features.posture) {
+            const poseObj = new PoseConstructor({
+                locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+            });
+            poseObj.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            currentPose = poseObj;
+        }
 
         let activeCanvasCtx: CanvasRenderingContext2D | null = null;
 
@@ -207,15 +211,16 @@ export function useEyeContact(
             }
         }
 
-        faceMeshRef.current!.onResults(onFaceResults);
-        poseObj.onResults(onPoseResults);
+        if (faceMeshRef.current) faceMeshRef.current.onResults(onFaceResults);
+        if (currentPose) currentPose.onResults(onPoseResults);
 
         let rafId: number | null = null;
+        let isClosed = false;
 
         if (videoMode) {
             // VIDEO MODE: Use requestAnimationFrame to process frames while video plays
             const processVideoFrame = async () => {
-                if (videoElement && !videoElement.paused && !videoElement.ended && videoElement.readyState >= 2) {
+                if (videoElement && !videoElement.paused && !videoElement.ended && videoElement.readyState >= 2 && !isClosed) {
                     try {
                         if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
                         if (currentPose) await currentPose.send({ image: videoElement });
@@ -223,7 +228,7 @@ export function useEyeContact(
                         // Silently handle frame processing errors
                     }
                 }
-                rafId = requestAnimationFrame(processVideoFrame);
+                if (!isClosed) rafId = requestAnimationFrame(processVideoFrame);
             };
             // Start the loop — it will idle when video is paused
             rafId = requestAnimationFrame(processVideoFrame);
@@ -231,9 +236,13 @@ export function useEyeContact(
             // LIVE MODE: Use MediaPipe Camera utility (starts getUserMedia)
             cameraRef.current = new CameraConstructor(videoElement, {
                 onFrame: async () => {
-                    if (videoElement) {
-                        if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
-                        if (currentPose) await currentPose.send({ image: videoElement });
+                    if (videoElement && !isClosed) {
+                        try {
+                            if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
+                            if (currentPose) await currentPose.send({ image: videoElement });
+                        } catch (e) {
+                            // Silently handle exceptions from closed models
+                        }
                     }
                 },
                 width: 640,
@@ -244,13 +253,14 @@ export function useEyeContact(
         }
 
         return () => {
+            isClosed = true;
             if (rafId !== null) cancelAnimationFrame(rafId);
             cameraRef.current?.stop();
-            faceMeshRef.current?.close();
-            currentPose?.close();
+            try { faceMeshRef.current?.close(); } catch (e) { /* ignore Wasm collision abort */ }
+            try { currentPose?.close(); } catch (e) { /* ignore Wasm collision abort */ }
         };
 
-    }, [videoRef, canvasRef, videoMode]);
+    }, [videoRef, canvasRef, videoMode, features.eyeContact, features.posture]);
 
     return { eyeContactScore, landmarksRef };
 }

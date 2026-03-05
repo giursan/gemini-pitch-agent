@@ -53,6 +53,7 @@ wss.on('connection', (ws: WebSocket) => {
                 case 'session_start': {
                     const sessionId = randomUUID();
                     const feedbackMode = data.feedbackMode || 'silent';
+                    const enableSpeech = data.agents?.speech ?? true;
 
                     liveSession = new GeminiLiveSession(sessionId, (message) => {
                         if (ws.readyState === WebSocket.OPEN) {
@@ -62,7 +63,7 @@ wss.on('connection', (ws: WebSocket) => {
                                 console.error('Error serializing message:', err);
                             }
                         }
-                    }, feedbackMode);
+                    }, feedbackMode, enableSpeech);
 
                     try {
                         await liveSession.connect();
@@ -143,6 +144,14 @@ wss.on('connection', (ws: WebSocket) => {
                 case 'barge_in': {
                     if (liveSession && !isPaused) {
                         liveSession.endTurn();
+                    }
+                    break;
+                }
+
+                // ── Text Input ───────────────────────────────────────────────
+                case 'chat_message': {
+                    if (liveSession && !isPaused && data.text) {
+                        liveSession.sendTextMessage(data.text);
                     }
                     break;
                 }

@@ -61,6 +61,14 @@ export function useGestureRecognizer(
 
         const init = async () => {
             try {
+                // Stagger initialization to avoid Emscripten Wasm concurrent load crashes
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                // Hack to prevent Emscripten from colliding between legacy MediaPipe and tasks-vision Wasms
+                const _window = window as any;
+                const _tempModule = _window.Module;
+                _window.Module = undefined;
+
                 // Dynamic import to avoid SSR issues
                 const vision = await import('@mediapipe/tasks-vision');
                 const { GestureRecognizer, FilesetResolver } = vision;
@@ -70,14 +78,17 @@ export function useGestureRecognizer(
                 const recognizer = await GestureRecognizer.createFromOptions(filesetResolver, {
                     baseOptions: {
                         modelAssetPath: MODEL_URL,
-                        delegate: 'GPU',
+                        delegate: 'CPU',
                     },
                     runningMode: 'VIDEO',
                     numHands: 2,
                 });
 
+                // Restore legacy Module reference
+                _window.Module = _tempModule;
+
                 if (cancelled) {
-                    recognizer.close();
+                    try { recognizer.close(); } catch (e) { /* ignore Wasm collision abort */ }
                     return;
                 }
 
@@ -151,7 +162,7 @@ export function useGestureRecognizer(
         return () => {
             cancelled = true;
             if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-            recognizerRef.current?.close();
+            try { recognizerRef.current?.close(); } catch (e) { /* ignore abort */ }
             recognizerRef.current = null;
         };
     }, [videoRef, enabled]);

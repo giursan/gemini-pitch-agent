@@ -1,26 +1,73 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8f9fa;
+  --foreground: #1f1f1f;
+  --surface: #ffffff;
+  --primary: #1a73e8;
+  --primary-hover: #174ea6;
+  --secondary: #5f6368;
+  --border: #e0e0e0;
+  --google-blue: #1a73e8;
+  --google-red: #d93025;
+  --google-yellow: #f9ab00;
+  --google-green: #1aa260;
+  --google-purple: #9334e6;
+  
+  --radius-xl: 24px;
+  --radius-2xl: 32px;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-surface: var(--surface);
+  --color-primary: var(--primary);
+  --color-google-blue: var(--google-blue);
+  --color-google-red: var(--google-red);
+  --color-google-yellow: var(--google-yellow);
+  --color-google-green: var(--google-green);
+  --color-google-purple: var(--google-purple);
+  --font-sans: 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbar for Google feel */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #dadce0;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #bdc1c6;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.google-shadow {
+  box-shadow: 0 1px 2px 0 rgba(60,64,67,.30), 0 1px 3px 1px rgba(60,64,67,.15);
+}
+
+.google-button {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.google-button:hover {
+  box-shadow: 0 1px 3px 0 rgba(60,64,67,.30), 0 4px 8px 3px rgba(60,64,67,.15);
 }
