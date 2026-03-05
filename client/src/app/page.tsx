@@ -40,9 +40,12 @@ export default function Home() {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const playbackCtxRef = useRef<AudioContext | null>(null);
+  const playbackTimeRef = useRef(0);
   const telemetryIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const alertIdRef = useRef(0);
+  const feedbackModeRef = useRef<FeedbackMode>('silent');
 
   const isActive = sessionState === 'recording' || sessionState === 'paused';
 
@@ -82,11 +85,49 @@ export default function Home() {
       audioContextRef.current.close();
       audioContextRef.current = null;
     }
+    if (playbackCtxRef.current) {
+      playbackCtxRef.current.close();
+      playbackCtxRef.current = null;
+    }
+    playbackTimeRef.current = 0;
+  }, []);
+
+  // ── Shark Mode Audio Playback ─────────────────────────────────────────
+
+  const playGeminiAudio = useCallback((base64Pcm: string) => {
+    if (!playbackCtxRef.current) {
+      playbackCtxRef.current = new AudioContext({ sampleRate: 24000 });
+      playbackTimeRef.current = 0;
+    }
+    const ctx = playbackCtxRef.current;
+
+    // Decode base64 → Int16 PCM → Float32
+    const binaryStr = atob(base64Pcm);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    const int16 = new Int16Array(bytes.buffer);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+      float32[i] = int16[i] / 32768;
+    }
+
+    // Create audio buffer and queue it
+    const buffer = ctx.createBuffer(1, float32.length, 24000);
+    buffer.getChannelData(0).set(float32);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+
+    const now = ctx.currentTime;
+    const startTime = Math.max(now, playbackTimeRef.current);
+    source.start(startTime);
+    playbackTimeRef.current = startTime + buffer.duration;
   }, []);
 
   // ── Session Lifecycle ───────────────────────────────────────────────────
 
   const handleStart = async (feedbackMode: FeedbackMode) => {
+    feedbackModeRef.current = feedbackMode;
     try {
       if (!webcamRef.current?.video) return;
       const stream = webcamRef.current.video.srcObject as MediaStream;
@@ -134,7 +175,7 @@ export default function Home() {
           return;
         }
 
-        // Gemini Live API messages
+        // Gemini Live API messages — tool calls
         if (data.toolCall?.functionCalls) {
           for (const fc of data.toolCall.functionCalls) {
             if (fc.name === 'emit_alert') {
@@ -153,6 +194,15 @@ export default function Home() {
                 contentScore: fc.args?.contentScore ?? prev.contentScore,
                 deliveryScore: fc.args?.deliveryScore ?? prev.deliveryScore,
               }));
+            }
+          }
+        }
+
+        // Gemini Live API messages — audio output (Shark Mode)
+        if (feedbackModeRef.current === 'shark' && data.serverContent?.modelTurn?.parts) {
+          for (const part of data.serverContent.modelTurn.parts) {
+            if (part.inlineData?.mimeType?.startsWith('audio/') && part.inlineData.data) {
+              playGeminiAudio(part.inlineData.data);
             }
           }
         }
@@ -397,7 +447,7 @@ export default function Home() {
                       <div key={key} className="flex justify-between items-center text-xs border-b border-white/5 pb-1.5">
                         <span className="text-neutral-500 capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
                         <span className={`font-mono font-bold ${result.percentile >= 60 ? 'text-emerald-400' :
-                            result.percentile >= 40 ? 'text-amber-400' : 'text-red-400'
+                          result.percentile >= 40 ? 'text-amber-400' : 'text-red-400'
                           }`}>
                           P{result.percentile}
                         </span>
