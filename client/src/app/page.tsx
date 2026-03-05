@@ -5,6 +5,7 @@ import Webcam from 'react-webcam';
 import { useEyeContact } from '../hooks/useEyeContact';
 import { useBodyLanguageAnalysis, TED_BENCHMARKS } from '../hooks/useBodyLanguageAnalysis';
 import { useGestureRecognizer } from '../hooks/useGestureRecognizer';
+import { loadBenchmarkProfile, scoreSession } from '../hooks/useTEDBenchmarks';
 import SessionControls, { type SessionState, type FeedbackMode } from './SessionControls';
 import FeedbackOverlay, { type Alert } from './FeedbackOverlay';
 import ReportView from './ReportView';
@@ -377,6 +378,34 @@ export default function Home() {
               <div className="mt-2 mb-1"><span className="text-xs font-semibold uppercase tracking-widest text-neutral-600">AI Agents</span></div>
               <MetricRow label="🎙️ Delivery Score" value={sessionMetrics.deliveryScore > 0 ? `${sessionMetrics.deliveryScore}/100` : '--'} good={sessionMetrics.deliveryScore >= 70} />
               <MetricRow label="📝 Content Score" value={sessionMetrics.contentScore > 0 ? `${sessionMetrics.contentScore}/100` : '--'} good={sessionMetrics.contentScore >= 70} />
+
+              {/* TED Benchmark Percentiles */}
+              {(() => {
+                const profile = loadBenchmarkProfile();
+                if (!profile) return (
+                  <div className="mt-3 bg-neutral-800/50 rounded-lg px-3 py-2">
+                    <a href="/profiler" className="text-xs text-amber-400/70 hover:text-amber-400 transition-colors">
+                      ⚠ No TED benchmarks → Go to Profiler
+                    </a>
+                  </div>
+                );
+                const scores = scoreSession(bodyMetrics, profile);
+                return (
+                  <>
+                    <div className="mt-3 mb-1"><span className="text-xs font-semibold uppercase tracking-widest text-neutral-600">vs TED Speakers</span></div>
+                    {Object.entries(scores).filter(([k]) => k !== 'overallScore').map(([key, result]) => (
+                      <div key={key} className="flex justify-between items-center text-xs border-b border-white/5 pb-1.5">
+                        <span className="text-neutral-500 capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
+                        <span className={`font-mono font-bold ${result.percentile >= 60 ? 'text-emerald-400' :
+                            result.percentile >= 40 ? 'text-amber-400' : 'text-red-400'
+                          }`}>
+                          P{result.percentile}
+                        </span>
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
 
               {/* Overall Score */}
               <div className="flex justify-between items-center text-sm pt-2">

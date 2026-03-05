@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useEyeContact } from '../../hooks/useEyeContact';
 import { useBodyLanguageAnalysis, TED_BENCHMARKS, type BodyLanguageMetrics } from '../../hooks/useBodyLanguageAnalysis';
+import { buildBenchmarkProfile, saveBenchmarkProfile, loadBenchmarkProfile } from '../../hooks/useTEDBenchmarks';
 
 interface ProfileResult {
     name: string;
@@ -117,31 +118,27 @@ export default function ProfilerPage() {
     const exportBenchmarks = () => {
         if (results.length === 0) return;
 
-        // Average across all profiled videos
-        const allMetrics = results.map(r => r.avgMetrics);
-        const benchmark = {
-            source: 'TED Profiler Scanner',
-            videosAnalyzed: results.map(r => r.name),
-            timestamp: new Date().toISOString(),
-            benchmarks: {
-                postureAngle: Math.round(allMetrics.reduce((s, m) => s + m.postureAngle, 0) / allMetrics.length),
-                shoulderSymmetry: Math.round((allMetrics.reduce((s, m) => s + m.shoulderSymmetry, 0) / allMetrics.length) * 100) / 100,
-                bodyStability: Math.round((allMetrics.reduce((s, m) => s + m.bodyStability, 0) / allMetrics.length) * 100) / 100,
-                gesturesPerMin: Math.round(allMetrics.reduce((s, m) => s + m.gesturesPerMin, 0) / allMetrics.length),
-                handVisibility: Math.round((allMetrics.reduce((s, m) => s + m.handVisibility, 0) / allMetrics.length) * 100) / 100,
-                smileScore: Math.round((allMetrics.reduce((s, m) => s + m.smileScore, 0) / allMetrics.length) * 100) / 100,
-                expressiveness: Math.round((allMetrics.reduce((s, m) => s + m.expressiveness, 0) / allMetrics.length) * 100) / 100,
-                overallScore: Math.round(allMetrics.reduce((s, m) => s + m.overallScore, 0) / allMetrics.length),
-            },
-        };
+        // Build full statistical benchmark profile from all profiled videos
+        const profile = buildBenchmarkProfile(
+            results.map(r => ({
+                name: r.name,
+                samples: r.samples,
+            }))
+        );
 
-        const blob = new Blob([JSON.stringify(benchmark, null, 2)], { type: 'application/json' });
+        // Save to localStorage for use in the main app
+        saveBenchmarkProfile(profile);
+
+        // Also export as JSON file for reference
+        const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'ted_benchmarks.json';
+        a.download = 'ted_benchmark_profile.json';
         a.click();
         URL.revokeObjectURL(url);
+
+        alert(`✅ Benchmark profile saved!\n${profile.videosAnalyzed.length} videos, ${profile.totalSamples} samples.\nYour live sessions will now score against these TED benchmarks.`);
     };
 
     return (
@@ -242,10 +239,24 @@ export default function ProfilerPage() {
                                 onClick={exportBenchmarks}
                                 className="px-4 py-3 rounded-xl text-sm font-medium bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
                             >
-                                📥 Export Benchmarks JSON
+                                📥 Save & Export Benchmarks
                             </button>
                         )}
                     </div>
+
+                    {/* Calibration status */}
+                    {(() => {
+                        const existing = typeof window !== 'undefined' ? loadBenchmarkProfile() : null;
+                        return existing ? (
+                            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3 text-xs text-emerald-400">
+                                ✅ Calibrated against {existing.videosAnalyzed.length} TED talk(s) ({existing.totalSamples} samples)
+                            </div>
+                        ) : (
+                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 text-xs text-amber-400">
+                                ⚠ No benchmarks saved yet — scan TED talks and click &quot;Save &amp; Export&quot;
+                            </div>
+                        );
+                    })()}
                 </section>
 
                 {/* Right: Live Metrics + Results */}

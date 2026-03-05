@@ -1,69 +1,72 @@
-import fs from 'fs';
+import admin from 'firebase-admin';
 import path from 'path';
 import type { SessionSummary } from './adk-live-session';
 
-const SESSIONS_DIR = path.join(process.cwd(), 'data', 'sessions');
+// ── Initialize Firebase Admin ───────────────────────────────────────────────────
 
-/**
- * Simple file-based session store. Each session is a JSON file.
- */
+const serviceAccountPath = path.resolve(process.cwd(), '..', 'service-account.json');
+
+if (!admin.apps.length) {
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccountPath),
+        projectId: process.env.FIREBASE_PROJECT_ID || 'gemini-pitch-agent-c23da',
+    });
+}
+
+const db = admin.firestore();
+const SESSIONS_COLLECTION = 'sessions';
+
+// ── Session Store (Firestore) ───────────────────────────────────────────────────
+
 export const sessionStore = {
     /**
      * Save a session with its report.
      */
-    save(summary: SessionSummary, report: Record<string, any>): void {
-        fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-        const filePath = path.join(SESSIONS_DIR, `${summary.sessionId}.json`);
+    async save(summary: SessionSummary, report: Record<string, any>): Promise<void> {
         const data = {
             ...summary,
             report,
             savedAt: Date.now(),
         };
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-        console.log(`Session saved: ${filePath}`);
+        await db.collection(SESSIONS_COLLECTION).doc(summary.sessionId).set(data);
+        console.log(`Session saved to Firestore: ${summary.sessionId}`);
     },
 
     /**
-     * List all saved sessions (metadata only, not full timelines).
+     * List all saved sessions (metadata only).
      */
-    list(): Array<{
+    async list(): Promise<Array<{
         sessionId: string;
         startedAt: number;
         endedAt: number | null;
         durationMs: number;
         feedbackMode: string;
         overallScore: number;
-    }> {
-        if (!fs.existsSync(SESSIONS_DIR)) return [];
+    }>> {
+        const snapshot = await db.collection(SESSIONS_COLLECTION)
+            .orderBy('startedAt', 'desc')
+            .select('sessionId', 'startedAt', 'endedAt', 'durationMs', 'feedbackMode', 'report')
+            .get();
 
-        return fs.readdirSync(SESSIONS_DIR)
-            .filter(f => f.endsWith('.json'))
-            .map(f => {
-                try {
-                    const raw = fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf-8');
-                    const data = JSON.parse(raw);
-                    return {
-                        sessionId: data.sessionId,
-                        startedAt: data.startedAt,
-                        endedAt: data.endedAt,
-                        durationMs: data.durationMs,
-                        feedbackMode: data.feedbackMode,
-                        overallScore: data.report?.overallScore ?? 0,
-                    };
-                } catch {
-                    return null;
-                }
-            })
-            .filter(Boolean)
-            .sort((a: any, b: any) => b.startedAt - a.startedAt) as any[];
+        return snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                sessionId: data.sessionId,
+                startedAt: data.startedAt,
+                endedAt: data.endedAt,
+                durationMs: data.durationMs,
+                feedbackMode: data.feedbackMode,
+                overallScore: data.report?.overallScore ?? 0,
+            };
+        });
     },
 
     /**
      * Get a full session by ID.
      */
-    get(sessionId: string): Record<string, any> | null {
-        const filePath = path.join(SESSIONS_DIR, `${sessionId}.json`);
-        if (!fs.existsSync(filePath)) return null;
-        return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    async get(sessionId: string): Promise<Record<string, any> | null> {
+        const doc = await db.collection(SESSIONS_COLLECTION).doc(sessionId).get();
+        if (!doc.exists) return null;
+        return doc.data() as Record<string, any>;
     },
 };

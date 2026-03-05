@@ -25,12 +25,13 @@ app.get('/health', (_req, res) => {
     res.status(200).send('OK');
 });
 
-app.get('/sessions', (_req, res) => {
-    res.json(sessionStore.list());
+app.get('/sessions', async (_req, res) => {
+    const sessions = await sessionStore.list();
+    res.json(sessions);
 });
 
-app.get('/sessions/:id', (req, res) => {
-    const session = sessionStore.get(req.params.id);
+app.get('/sessions/:id', async (req, res) => {
+    const session = await sessionStore.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     res.json(session);
 });
@@ -109,8 +110,8 @@ wss.on('connection', (ws: WebSocket) => {
                     // Generate report via Gemini
                     const report = await generateReport(summary);
 
-                    // Persist to disk
-                    sessionStore.save(summary, report);
+                    // Persist to Firestore
+                    await sessionStore.save(summary, report);
 
                     // Send report to client
                     ws.send(JSON.stringify({
