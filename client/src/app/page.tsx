@@ -5,8 +5,12 @@ import Webcam from 'react-webcam';
 import { useEyeContact } from '../hooks/useEyeContact';
 import { useBodyLanguageAnalysis, TED_BENCHMARKS } from '../hooks/useBodyLanguageAnalysis';
 import { useGestureRecognizer } from '../hooks/useGestureRecognizer';
+import SessionControls, { type SessionState, type FeedbackMode } from './SessionControls';
+import FeedbackOverlay, { type Alert } from './FeedbackOverlay';
+import ReportView from './ReportView';
 
-// Lightweight utility to convert Float32Array to 16-bit PCM Base64
+// ── Audio Util ──────────────────────────────────────────────────────────────────
+
 function floatTo16BitPcmAndBase64(input: Float32Array): string {
   const buffer = new ArrayBuffer(input.length * 2);
   const view = new DataView(buffer);
@@ -22,120 +26,204 @@ function floatTo16BitPcmAndBase64(input: Float32Array): string {
   return btoa(binary);
 }
 
+// ── Main Page ───────────────────────────────────────────────────────────────────
+
 export default function Home() {
-  const [isConnected, setIsConnected] = useState(false);
-  // We manage CV metrics locally now, and qualitative metrics via Gemini
-  const [cvMetrics, setCvMetrics] = useState({ eyeContact: 100, isSlouching: false });
-  const [sessionMetrics, setSessionMetrics] = useState({ pacing: 0, filler: 0 });
-  const [alerts, setAlerts] = useState<{ type: string, msg: string }[]>([]);
+  const [sessionState, setSessionState] = useState<SessionState>('idle');
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionMetrics, setSessionMetrics] = useState({ pacing: 0, filler: 0, contentScore: 0, deliveryScore: 0 });
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [report, setReport] = useState<Record<string, any> | null>(null);
 
   const webcamRef = useRef<Webcam>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const telemetryIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const alertIdRef = useRef(0);
 
-  // Call the MediaPipe CV hook with the overlay canvas
-  const { eyeContactScore: realTimeEyeContact, landmarksRef } = useEyeContact(webcamRef as any || { current: null }, overlayCanvasRef);
+  const isActive = sessionState === 'recording' || sessionState === 'paused';
 
-  // Body language analysis (consumes landmarks from the CV hook)
-  const { metrics: bodyMetrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, true);
+  // CV Hooks (run while session is active)
+  const { eyeContactScore: realTimeEyeContact, landmarksRef } = useEyeContact(
+    webcamRef as any || { current: null }, overlayCanvasRef
+  );
+  const { metrics: bodyMetrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, isActive);
 
-  // Gesture recognition — derive a raw video ref from the Webcam component
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     const video = (webcamRef.current as any)?.video || null;
     videoElementRef.current = video;
   });
-  const gestureMetrics = useGestureRecognizer(videoElementRef, isConnected);
+  const gestureMetrics = useGestureRecognizer(videoElementRef, isActive);
 
-  // Audio & VAD Refs
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const telemetryIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const BARGE_IN_THRESHOLD = 0.05;
 
-  const BARGE_IN_THRESHOLD = 0.05; // Audio level threshold
-
-  // Cleanup on unmount
+  // ── Cleanup on unmount ──────────────────────────────────────────────────
   useEffect(() => {
-    return () => stopSession();
+    return () => {
+      cleanupMedia();
+      if (wsRef.current) wsRef.current.close();
+    };
   }, []);
 
-  const stopSession = useCallback(() => {
-    if (wsRef.current) wsRef.current.close();
-    if (telemetryIntervalRef.current) clearInterval(telemetryIntervalRef.current);
-    if (audioContextRef.current) audioContextRef.current.close();
-    setIsConnected(false);
-  }, []);
-
-  const toggleConnection = async () => {
-    if (isConnected) {
-      stopSession();
-    } else {
-      await startSession();
+  const cleanupMedia = useCallback(() => {
+    if (telemetryIntervalRef.current) {
+      clearInterval(telemetryIntervalRef.current);
+      telemetryIntervalRef.current = null;
     }
-  };
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+  }, []);
 
-  const startSession = async () => {
+  // ── Session Lifecycle ───────────────────────────────────────────────────
+
+  const handleStart = async (feedbackMode: FeedbackMode) => {
     try {
       if (!webcamRef.current?.video) return;
       const stream = webcamRef.current.video.srcObject as MediaStream;
 
-      // Connect WebSocket
-      const ws = new WebSocket('ws://localhost:8080'); // Hardcoded for local dev MVP
+      const ws = new WebSocket('ws://localhost:8080');
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setIsConnected(true);
-        console.log("Connected to local backend proxy");
-        startMediaExtraction(stream, ws);
+        ws.send(JSON.stringify({ type: 'session_start', feedbackMode }));
       };
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        // Example handling of Agentic UI Updates from Gemini function calls
-        if (data.serverContent?.modelTurn) {
-          // Agent is speaking
-        } else if (data.toolCall) {
-          // Gemini emitted an overlay tool call!
-          const args = data.toolCall.functionCalls[0].args;
-          if (args.type === "alert" || data.toolCall.functionCalls[0].name === "emit_alert") {
-            setAlerts(prev => [...prev.slice(-2), { type: args.severity, msg: args.message }]);
-          } else if (args.type === "metrics" || data.toolCall.functionCalls[0].name === "update_metrics") {
-            // Ignore eyeContact from Gemini now, we use CV
-            setSessionMetrics({ pacing: args.pacing || sessionMetrics.pacing, filler: args.filler || sessionMetrics.filler });
+
+        // Server protocol messages
+        if (data.type === 'session_started') {
+          setSessionId(data.sessionId);
+          setSessionState('recording');
+          setAlerts([]);
+          setReport(null);
+          startMediaExtraction(stream, ws);
+          return;
+        }
+        if (data.type === 'session_paused') {
+          setSessionState('paused');
+          return;
+        }
+        if (data.type === 'session_resumed') {
+          setSessionState('recording');
+          return;
+        }
+        if (data.type === 'generating_report') {
+          setSessionState('generating');
+          cleanupMedia();
+          return;
+        }
+        if (data.type === 'session_report') {
+          setReport(data.report);
+          setSessionState('report');
+          return;
+        }
+        if (data.type === 'error') {
+          console.error('Server error:', data.message);
+          setSessionState('idle');
+          return;
+        }
+
+        // Gemini Live API messages
+        if (data.toolCall?.functionCalls) {
+          for (const fc of data.toolCall.functionCalls) {
+            if (fc.name === 'emit_alert') {
+              const id = `alert-${++alertIdRef.current}`;
+              const source = fc.args?.source || 'orchestrator';
+              setAlerts(prev => [...prev, {
+                id,
+                severity: fc.args?.severity || 'info',
+                message: `[${source}] ${fc.args?.message || ''}`,
+                timestamp: Date.now(),
+              }]);
+            } else if (fc.name === 'update_metrics') {
+              setSessionMetrics(prev => ({
+                pacing: fc.args?.pacing ?? prev.pacing,
+                filler: fc.args?.filler ?? prev.filler,
+                contentScore: fc.args?.contentScore ?? prev.contentScore,
+                deliveryScore: fc.args?.deliveryScore ?? prev.deliveryScore,
+              }));
+            }
           }
         }
       };
 
-      ws.onclose = stopSession;
+      ws.onclose = () => {
+        if (sessionState !== 'report' && sessionState !== 'generating') {
+          cleanupMedia();
+          setSessionState('idle');
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        cleanupMedia();
+        setSessionState('idle');
+      };
     } catch (err) {
-      console.error("Error starting session", err);
+      console.error('Error starting session:', err);
     }
   };
 
+  const handlePause = () => {
+    wsRef.current?.send(JSON.stringify({ type: 'session_pause' }));
+  };
+
+  const handleResume = () => {
+    wsRef.current?.send(JSON.stringify({ type: 'session_resume' }));
+  };
+
+  const handleEnd = () => {
+    wsRef.current?.send(JSON.stringify({ type: 'session_end' }));
+  };
+
+  const handleNewSession = () => {
+    setSessionState('idle');
+    setReport(null);
+    setSessionId(null);
+    setAlerts([]);
+    setSessionMetrics({ pacing: 0, filler: 0, contentScore: 0, deliveryScore: 0 });
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+  };
+
+  const handleDismissAlert = useCallback((id: string) => {
+    setAlerts(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  // ── Media Extraction ────────────────────────────────────────────────────
+
   const startMediaExtraction = (stream: MediaStream, ws: WebSocket) => {
-    // 1. Audio and VAD Extraction
     const audioCtx = new window.AudioContext({ sampleRate: 16000 });
     audioContextRef.current = audioCtx;
 
-    // We get the audio track specifically
     const audioStream = new MediaStream(stream.getAudioTracks());
-    if (audioStream.getAudioTracks().length === 0) {
-      console.warn("No audio tracks found in stream.");
-      // We can continue running CV even without audio for testing
-    } else {
+    if (audioStream.getAudioTracks().length > 0) {
       const source = audioCtx.createMediaStreamSource(audioStream);
       const analyser = audioCtx.createAnalyser();
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      analyserRef.current = analyser;
+      processorRef.current = processor;
 
       source.connect(analyser);
       analyser.connect(processor);
       processor.connect(audioCtx.destination);
 
       processor.onaudioprocess = (e) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
         const inputData = e.inputBuffer.getChannelData(0);
 
-        // VAD logic: detect if user is interrupting
+        // VAD
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         analyser.getByteTimeDomainData(dataArray);
         let sum = 0;
@@ -144,77 +232,85 @@ export default function Home() {
           sum += x * x;
         }
         const rms = Math.sqrt(sum / dataArray.length);
-
         if (rms > BARGE_IN_THRESHOLD) {
           ws.send(JSON.stringify({ type: 'barge_in', data: true }));
         }
 
-        // Send PCM Base64 chunks to Gemini
         const pcmBase64 = floatTo16BitPcmAndBase64(inputData);
         ws.send(JSON.stringify({ type: 'audio', data: pcmBase64 }));
       };
     }
 
-    // 2. Video Context & Telemetry (1 FPS)
-    // We send BOTH the raw frame (for semantic agentic understanding) AND the CV telemetry
+    // Video + CV telemetry at 1 FPS
     telemetryIntervalRef.current = setInterval(() => {
-      if (webcamRef.current) {
-        const imageSrc = webcamRef.current.getScreenshot();
-        if (imageSrc) {
-          const base64Data = imageSrc.split(',')[1];
-          // Send vision frame for semantics (e.g. "What is written on the whiteboard behind me?")
-          ws.send(JSON.stringify({ type: 'video', data: base64Data }));
-        }
+      if (!webcamRef.current || ws.readyState !== WebSocket.OPEN) return;
 
-        // Send deterministic CV telemetry to guide the LLM
-        ws.send(JSON.stringify({
-          type: 'client_telemetry',
-          data: {
-            eyeContact: realTimeEyeContact,
-            postureAngle: bodyMetrics.postureAngle,
-            isGoodPosture: bodyMetrics.isGoodPosture,
-            gesturesPerMin: bodyMetrics.gesturesPerMin,
-            handVisibility: bodyMetrics.handVisibility,
-            smileScore: bodyMetrics.smileScore,
-            overallScore: bodyMetrics.overallScore,
-            currentGestures: gestureMetrics.currentGestures.map(g => g.gesture),
-            openGestureRatio: gestureMetrics.openGestureRatio,
-          }
-        }));
+      const imageSrc = webcamRef.current.getScreenshot();
+      if (imageSrc) {
+        const base64Data = imageSrc.split(',')[1];
+        ws.send(JSON.stringify({ type: 'video', data: base64Data }));
       }
+
+      ws.send(JSON.stringify({
+        type: 'client_telemetry',
+        data: {
+          eyeContact: realTimeEyeContact,
+          postureAngle: bodyMetrics.postureAngle,
+          isGoodPosture: bodyMetrics.isGoodPosture,
+          gesturesPerMin: bodyMetrics.gesturesPerMin,
+          handVisibility: bodyMetrics.handVisibility,
+          smileScore: bodyMetrics.smileScore,
+          overallScore: bodyMetrics.overallScore,
+          currentGestures: gestureMetrics.currentGestures.map(g => g.gesture),
+          openGestureRatio: gestureMetrics.openGestureRatio,
+        },
+      }));
     }, 1000);
   };
+
+  // ── Report View ─────────────────────────────────────────────────────────
+
+  if (sessionState === 'report' && report) {
+    return <ReportView report={report} sessionId={sessionId || ''} onNewSession={handleNewSession} />;
+  }
+
+  // ── Main Live View ──────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-[family-name:var(--font-geist-sans)]">
       <header className="px-6 py-4 flex items-center justify-between border-b border-white/10">
-        <h1 className="text-xl font-semibold tracking-tight text-white/90">Aura <span className="text-white/50 font-normal">Mentor</span></h1>
-        <button
-          onClick={toggleConnection}
-          className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${isConnected ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-white text-black hover:bg-neutral-200'}`}
-        >
-          {isConnected ? 'End Session' : 'Start Practice'}
-        </button>
+        <h1 className="text-xl font-semibold tracking-tight text-white/90">
+          Aura <span className="text-white/50 font-normal">Mentor</span>
+        </h1>
+        <SessionControls
+          state={sessionState}
+          onStart={handleStart}
+          onPause={handlePause}
+          onResume={handleResume}
+          onEnd={handleEnd}
+        />
       </header>
 
       <main className="flex-1 flex flex-col lg:flex-row p-6 gap-6 max-w-7xl mx-auto w-full">
+        {/* Video Section */}
         <section className="flex-1 flex flex-col gap-4">
-          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video ring-1 ring-white/10 flex items-center justify-center shadow-2xl relative">
+          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video ring-1 ring-white/10 flex items-center justify-center shadow-2xl">
             <Webcam
               audio={true}
               ref={webcamRef}
               screenshotFormat="image/jpeg"
               videoConstraints={{ width: 1280, height: 720, facingMode: "user" }}
               className="w-full h-full object-cover"
-              muted={true} // Mututed locally to prevent feedback loop
+              muted={true}
             />
-            {/* CV Overlay Canvas */}
             <canvas
               ref={overlayCanvasRef}
               className="absolute inset-0 w-full h-full z-10 pointer-events-none object-cover"
             />
-            {isConnected && (
-              <div className="absolute top-4 left-4 flex gap-2">
+
+            {/* Status badges */}
+            {isActive && (
+              <div className="absolute top-4 left-4 flex gap-2 z-20">
                 <span className="px-3 py-1 bg-black/60 backdrop-blur-md rounded-full text-xs font-mono font-medium text-emerald-400 border border-emerald-500/30 animate-pulse">
                   ● LIVE AI
                 </span>
@@ -223,108 +319,66 @@ export default function Home() {
                 </span>
               </div>
             )}
-          </div>
 
-          <div className="h-24 bg-neutral-900 border border-white/5 rounded-xl p-4 flex items-center shadow-inner overflow-hidden">
-            {alerts.length > 0 ? (
-              <div className="space-y-1 w-full">
-                {alerts.map((a, i) => (
-                  <p key={i} className={`text-sm font-medium ${a.type === 'critical' || a.type === 'warning' ? 'text-amber-400' : 'text-blue-400'}`}>
-                    {a.type.toUpperCase()}: {a.msg}
-                  </p>
-                ))}
+            {/* Pause overlay */}
+            {sessionState === 'paused' && (
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-30">
+                <span className="text-2xl font-bold text-white/70">⏸ Paused</span>
               </div>
-            ) : (
-              <p className="text-neutral-400 text-sm font-mono italic">Awaiting feedback...</p>
             )}
+
+            {/* Generating overlay */}
+            {sessionState === 'generating' && (
+              <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-30 gap-4">
+                <div className="w-10 h-10 border-3 border-white/20 border-t-white rounded-full animate-spin" />
+                <span className="text-lg font-semibold text-white/70">Analyzing your session...</span>
+              </div>
+            )}
+
+            {/* Idle state */}
+            {sessionState === 'idle' && (
+              <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-15">
+                <p className="text-white/40 text-sm font-medium">Click &quot;Start Practice&quot; to begin</p>
+              </div>
+            )}
+
+            {/* Feedback toast overlay */}
+            <FeedbackOverlay alerts={alerts} onDismiss={handleDismissAlert} />
           </div>
         </section>
 
+        {/* Metrics Sidebar */}
         <aside className="w-full lg:w-80 flex flex-col gap-4">
           <div className="bg-neutral-900 border border-white/5 p-5 rounded-2xl shadow-lg flex-1 overflow-y-auto">
             <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500 mb-4">Live Metrics</h2>
             <div className="space-y-3">
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Eye Contact (CV)</span>
-                <span className={`font-mono font-bold ${realTimeEyeContact > 70 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {realTimeEyeContact}%
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Posture</span>
-                <span className={`font-mono font-bold ${bodyMetrics.isGoodPosture ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {bodyMetrics.isGoodPosture ? '✓ Upright' : '⚠ Slouching'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Posture Angle</span>
-                <span className={`font-mono font-bold ${bodyMetrics.postureAngle > benchmarks.slouchAngle ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {bodyMetrics.postureAngle}°
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Shoulder Balance</span>
-                <span className={`font-mono font-bold ${bodyMetrics.shoulderSymmetry > 0.8 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {Math.round(bodyMetrics.shoulderSymmetry * 100)}%
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Gestures/min</span>
-                <span className={`font-mono font-bold ${bodyMetrics.gesturesPerMin >= 10 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {bodyMetrics.gesturesPerMin} <span className="text-neutral-600 text-xs">/ {benchmarks.gesturesPerMin}</span>
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Stability</span>
-                <span className={`font-mono font-bold ${bodyMetrics.bodyStability > 0.7 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {Math.round(bodyMetrics.bodyStability * 100)}%
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Hand Visibility</span>
-                <span className={`font-mono font-bold ${bodyMetrics.handVisibility > 0.6 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {Math.round(bodyMetrics.handVisibility * 100)}%
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Smile</span>
-                <span className={`font-mono font-bold ${bodyMetrics.smileScore > 0.3 ? 'text-emerald-400' : 'text-neutral-400'}`}>
-                  {Math.round(bodyMetrics.smileScore * 100)}%
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Expressiveness</span>
-                <span className={`font-mono font-bold ${bodyMetrics.expressiveness > 0.3 ? 'text-emerald-400' : 'text-neutral-400'}`}>
-                  {Math.round(bodyMetrics.expressiveness * 100)}%
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Pacing (WPM)</span>
-                <span className={`font-mono font-bold ${sessionMetrics.pacing > 120 && sessionMetrics.pacing < 160 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {sessionMetrics.pacing > 0 ? sessionMetrics.pacing : '--'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Filler Words</span>
-                <span className={`font-mono font-bold ${sessionMetrics.filler < 5 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {sessionMetrics.filler} / min
-                </span>
-              </div>
-              {/* Gesture Recognition */}
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Hand Gesture</span>
-                <span className="font-mono font-bold text-purple-400">
-                  {gestureMetrics.currentGestures.length > 0
-                    ? gestureMetrics.currentGestures.map(g => g.gesture.replace('_', ' ')).join(' / ')
-                    : '--'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
-                <span className="text-neutral-400">Open Gestures</span>
-                <span className={`font-mono font-bold ${gestureMetrics.openGestureRatio > 0.5 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {Math.round(gestureMetrics.openGestureRatio * 100)}%
-                </span>
-              </div>
+              <MetricRow label="Eye Contact (CV)" value={`${realTimeEyeContact}%`} good={realTimeEyeContact > 70} />
+              <MetricRow label="Posture" value={bodyMetrics.isGoodPosture ? '✓ Upright' : '⚠ Slouching'} good={bodyMetrics.isGoodPosture} />
+              <MetricRow label="Posture Angle" value={`${bodyMetrics.postureAngle}°`} good={bodyMetrics.postureAngle > benchmarks.slouchAngle} />
+              <MetricRow label="Shoulder Balance" value={`${Math.round(bodyMetrics.shoulderSymmetry * 100)}%`} good={bodyMetrics.shoulderSymmetry > 0.8} />
+              <MetricRow label="Gestures/min" value={<>{bodyMetrics.gesturesPerMin} <span className="text-neutral-600 text-xs">/ {benchmarks.gesturesPerMin}</span></>} good={bodyMetrics.gesturesPerMin >= 10} />
+              <MetricRow label="Stability" value={`${Math.round(bodyMetrics.bodyStability * 100)}%`} good={bodyMetrics.bodyStability > 0.7} />
+              <MetricRow label="Hand Visibility" value={`${Math.round(bodyMetrics.handVisibility * 100)}%`} good={bodyMetrics.handVisibility > 0.6} />
+              <MetricRow label="Smile" value={`${Math.round(bodyMetrics.smileScore * 100)}%`} good={bodyMetrics.smileScore > 0.3} />
+              <MetricRow label="Expressiveness" value={`${Math.round(bodyMetrics.expressiveness * 100)}%`} good={bodyMetrics.expressiveness > 0.3} />
+              <MetricRow label="Pacing (WPM)" value={sessionMetrics.pacing > 0 ? `${sessionMetrics.pacing}` : '--'} good={sessionMetrics.pacing > 120 && sessionMetrics.pacing < 160} />
+              <MetricRow label="Filler Words" value={`${sessionMetrics.filler} / min`} good={sessionMetrics.filler < 5} />
+              <MetricRow
+                label="Hand Gesture"
+                value={gestureMetrics.currentGestures.length > 0
+                  ? gestureMetrics.currentGestures.map(g => g.gesture.replace('_', ' ')).join(' / ')
+                  : '--'}
+                good={null}
+                color="text-purple-400"
+              />
+              <MetricRow label="Open Gestures" value={`${Math.round(gestureMetrics.openGestureRatio * 100)}%`} good={gestureMetrics.openGestureRatio > 0.5} />
+
+              {/* Server-side Agent Scores */}
+              <div className="mt-2 mb-1"><span className="text-xs font-semibold uppercase tracking-widest text-neutral-600">AI Agents</span></div>
+              <MetricRow label="🎙️ Delivery Score" value={sessionMetrics.deliveryScore > 0 ? `${sessionMetrics.deliveryScore}/100` : '--'} good={sessionMetrics.deliveryScore >= 70} />
+              <MetricRow label="📝 Content Score" value={sessionMetrics.contentScore > 0 ? `${sessionMetrics.contentScore}/100` : '--'} good={sessionMetrics.contentScore >= 70} />
+
+              {/* Overall Score */}
               <div className="flex justify-between items-center text-sm pt-2">
                 <span className="text-neutral-300 font-semibold">Overall Score</span>
                 <span className={`font-mono font-bold text-lg ${bodyMetrics.overallScore >= 70 ? 'text-emerald-400' :
@@ -337,6 +391,23 @@ export default function Home() {
           </div>
         </aside>
       </main>
+    </div>
+  );
+}
+
+// ── Metric Row Component ────────────────────────────────────────────────────────
+
+function MetricRow({ label, value, good, color }: {
+  label: string;
+  value: React.ReactNode;
+  good: boolean | null;
+  color?: string;
+}) {
+  const textColor = color || (good === null ? 'text-white/60' : good ? 'text-emerald-400' : 'text-amber-400');
+  return (
+    <div className="flex justify-between items-center text-sm border-b border-white/5 pb-2">
+      <span className="text-neutral-400">{label}</span>
+      <span className={`font-mono font-bold ${textColor}`}>{value}</span>
     </div>
   );
 }

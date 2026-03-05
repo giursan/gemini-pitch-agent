@@ -3,7 +3,10 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GeminiLiveClient } from './services/gemini-live-client';
+import { randomUUID } from 'crypto';
+import { GeminiLiveSession } from './services/adk-live-session';
+import { generateReport } from './services/report-generator';
+import { sessionStore } from './services/session-store';
 
 dotenv.config();
 
@@ -16,51 +19,152 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 8080;
 
-app.get('/health', (req, res) => {
+// ── REST Endpoints ──────────────────────────────────────────────────────────────
+
+app.get('/health', (_req, res) => {
     res.status(200).send('OK');
 });
 
-// For a real app, these come from environment variables or auth tokens
-const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || 'presentation-mentor-hack';
-const LOCATION = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
-const MODEL = 'gemini-1.5-flash-002-live-exp'; // Use the multimodal live experimental model
+app.get('/sessions', (_req, res) => {
+    res.json(sessionStore.list());
+});
+
+app.get('/sessions/:id', (req, res) => {
+    const session = sessionStore.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    res.json(session);
+});
+
+// ── WebSocket Handling ──────────────────────────────────────────────────────────
 
 wss.on('connection', (ws: WebSocket) => {
     console.log('Client connected to proxy WebSocket.');
 
-    // Initialize Vertex AI Gemini Live Client for this session
-    const geminiLiveClient = new GeminiLiveClient(PROJECT_ID, LOCATION, MODEL, (response) => {
-        // Forward Gemini Live API responses back to the Next.js client
-        // Response could contain audio buffers and structured JSON (e.g. function calls/tools)
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(response));
-        }
-    });
+    let liveSession: GeminiLiveSession | null = null;
+    let isPaused = false;
 
-    // Connect to Vertex AI when the frontend connects to us
-    geminiLiveClient.connect().catch(console.error);
-
-    ws.on('message', (message: Buffer) => {
+    ws.on('message', async (rawMessage: Buffer) => {
         try {
-            const data = JSON.parse(message.toString());
+            const data = JSON.parse(rawMessage.toString());
 
-            // Determine what type of multimodal data the frontend sent
-            if (data.type === 'audio' && data.data) {
-                geminiLiveClient.sendAudioChunk(data.data);
-            } else if (data.type === 'video' && data.data) {
-                geminiLiveClient.sendVideoFrame(data.data);
-            } else if (data.type === 'barge_in') {
-                // User started speaking over the agent
-                geminiLiveClient.endTurn();
+            switch (data.type) {
+                // ── Session Lifecycle ─────────────────────────────────────
+                case 'session_start': {
+                    const sessionId = randomUUID();
+                    const feedbackMode = data.feedbackMode || 'silent';
+
+                    liveSession = new GeminiLiveSession(sessionId, (message) => {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            try {
+                                ws.send(JSON.stringify(message));
+                            } catch (err) {
+                                console.error('Error serializing message:', err);
+                            }
+                        }
+                    }, feedbackMode);
+
+                    try {
+                        await liveSession.connect();
+                        isPaused = false;
+                        // Confirm session started
+                        ws.send(JSON.stringify({
+                            type: 'session_started',
+                            sessionId,
+                            feedbackMode,
+                        }));
+                    } catch (err) {
+                        console.error('Failed to start Gemini session:', err);
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            message: 'Failed to connect to Gemini Live API',
+                            detail: String(err),
+                        }));
+                        liveSession = null;
+                    }
+                    break;
+                }
+
+                case 'session_pause': {
+                    isPaused = true;
+                    ws.send(JSON.stringify({ type: 'session_paused' }));
+                    break;
+                }
+
+                case 'session_resume': {
+                    isPaused = false;
+                    ws.send(JSON.stringify({ type: 'session_resumed' }));
+                    break;
+                }
+
+                case 'session_end': {
+                    if (!liveSession) break;
+
+                    // Grab the summary before disconnecting
+                    const summary = liveSession.getSessionSummary();
+                    liveSession.disconnect();
+
+                    // Notify client we're generating the report
+                    ws.send(JSON.stringify({ type: 'generating_report' }));
+
+                    // Generate report via Gemini
+                    const report = await generateReport(summary);
+
+                    // Persist to disk
+                    sessionStore.save(summary, report);
+
+                    // Send report to client
+                    ws.send(JSON.stringify({
+                        type: 'session_report',
+                        sessionId: summary.sessionId,
+                        report,
+                    }));
+
+                    liveSession = null;
+                    isPaused = false;
+                    break;
+                }
+
+                // ── Media Streams (only when recording) ──────────────────
+                case 'audio': {
+                    if (liveSession && !isPaused && data.data) {
+                        liveSession.sendAudioChunk(data.data);
+                    }
+                    break;
+                }
+
+                case 'video': {
+                    if (liveSession && !isPaused && data.data) {
+                        liveSession.sendVideoFrame(data.data);
+                    }
+                    break;
+                }
+
+                case 'barge_in': {
+                    if (liveSession && !isPaused) {
+                        liveSession.endTurn();
+                    }
+                    break;
+                }
+
+                // ── CV Telemetry from client ─────────────────────────────
+                case 'client_telemetry': {
+                    if (liveSession && !isPaused && data.data) {
+                        liveSession.logCvTelemetry(data.data);
+                    }
+                    break;
+                }
             }
         } catch (e) {
-            console.error('Error handling frontend WS message:', e);
+            console.error('Error handling WS message:', e);
         }
     });
 
     ws.on('close', () => {
         console.log('Frontend client disconnected.');
-        geminiLiveClient.disconnect();
+        if (liveSession) {
+            liveSession.disconnect();
+            liveSession = null;
+        }
     });
 });
 
