@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { randomUUID } from 'crypto';
-import { GeminiLiveSession } from './services/adk-live-session';
+import { Orchestrator } from './services/orchestrator';
 import { generateReport } from './services/report-generator';
 import { sessionStore } from './services/session-store';
 
@@ -36,12 +36,22 @@ app.get('/sessions/:id', async (req, res) => {
     res.json(session);
 });
 
+app.delete('/sessions/:id', async (req, res) => {
+    try {
+        await sessionStore.delete(req.params.id);
+        res.status(204).send();
+    } catch (err) {
+        console.error('Failed to delete session:', err);
+        res.status(500).json({ error: 'Failed to delete session' });
+    }
+});
+
 // ── WebSocket Handling ──────────────────────────────────────────────────────────
 
 wss.on('connection', (ws: WebSocket) => {
     console.log('Client connected to proxy WebSocket.');
 
-    let liveSession: GeminiLiveSession | null = null;
+    let orchestrator: Orchestrator | null = null;
     let isPaused = false;
 
     ws.on('message', async (rawMessage: Buffer) => {
@@ -55,18 +65,15 @@ wss.on('connection', (ws: WebSocket) => {
                     const feedbackMode = data.feedbackMode || 'silent';
                     const enableSpeech = data.agents?.speech ?? true;
 
-                    liveSession = new GeminiLiveSession(sessionId, (message) => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            try {
-                                ws.send(JSON.stringify(message));
-                            } catch (err) {
-                                console.error('Error serializing message:', err);
-                            }
-                        }
-                    }, feedbackMode, enableSpeech);
+                    orchestrator = new Orchestrator({
+                        sessionId,
+                        feedbackMode,
+                        enableSpeech,
+                        ws,
+                    });
 
                     try {
-                        await liveSession.connect();
+                        await orchestrator.start();
                         isPaused = false;
                         // Confirm session started
                         ws.send(JSON.stringify({
@@ -75,35 +82,37 @@ wss.on('connection', (ws: WebSocket) => {
                             feedbackMode,
                         }));
                     } catch (err) {
-                        console.error('Failed to start Gemini session:', err);
+                        console.error('Failed to start orchestrator:', err);
                         ws.send(JSON.stringify({
                             type: 'error',
                             message: 'Failed to connect to Gemini Live API',
                             detail: String(err),
                         }));
-                        liveSession = null;
+                        orchestrator = null;
                     }
                     break;
                 }
 
                 case 'session_pause': {
                     isPaused = true;
+                    orchestrator?.pause();
                     ws.send(JSON.stringify({ type: 'session_paused' }));
                     break;
                 }
 
                 case 'session_resume': {
                     isPaused = false;
+                    orchestrator?.resume();
                     ws.send(JSON.stringify({ type: 'session_resumed' }));
                     break;
                 }
 
                 case 'session_end': {
-                    if (!liveSession) break;
+                    if (!orchestrator) break;
 
-                    // Grab the summary before disconnecting
-                    const summary = liveSession.getSessionSummary();
-                    liveSession.disconnect();
+                    // Grab the summary before stopping
+                    const summary = orchestrator.getSessionSummary();
+                    orchestrator.stop();
 
                     // Notify client we're generating the report
                     ws.send(JSON.stringify({ type: 'generating_report' }));
@@ -121,45 +130,44 @@ wss.on('connection', (ws: WebSocket) => {
                         report,
                     }));
 
-                    liveSession = null;
+                    orchestrator = null;
                     isPaused = false;
                     break;
                 }
 
                 // ── Media Streams (only when recording) ──────────────────
                 case 'audio': {
-                    if (liveSession && !isPaused && data.data) {
-                        liveSession.sendAudioChunk(data.data);
+                    if (orchestrator && !isPaused && data.data) {
+                        orchestrator.handleAudio(data.data);
                     }
                     break;
                 }
 
                 case 'video': {
-                    if (liveSession && !isPaused && data.data) {
-                        liveSession.sendVideoFrame(data.data);
-                    }
+                    // Video frames no longer sent to Gemini — 
+                    // visual analysis handled by client-side CV + CvEvaluator
                     break;
                 }
 
                 case 'barge_in': {
-                    if (liveSession && !isPaused) {
-                        liveSession.endTurn();
+                    if (orchestrator && !isPaused) {
+                        orchestrator.handleBargeIn();
                     }
                     break;
                 }
 
                 // ── Text Input ───────────────────────────────────────────────
                 case 'chat_message': {
-                    if (liveSession && !isPaused && data.text) {
-                        liveSession.sendTextMessage(data.text);
+                    if (orchestrator && !isPaused && data.text) {
+                        orchestrator.handleChatMessage(data.text);
                     }
                     break;
                 }
 
                 // ── CV Telemetry from client ─────────────────────────────
                 case 'client_telemetry': {
-                    if (liveSession && !isPaused && data.data) {
-                        liveSession.logCvTelemetry(data.data);
+                    if (orchestrator && !isPaused && data.data) {
+                        orchestrator.handleCvTelemetry(data.data);
                     }
                     break;
                 }
@@ -171,9 +179,9 @@ wss.on('connection', (ws: WebSocket) => {
 
     ws.on('close', () => {
         console.log('Frontend client disconnected.');
-        if (liveSession) {
-            liveSession.disconnect();
-            liveSession = null;
+        if (orchestrator) {
+            orchestrator.stop();
+            orchestrator = null;
         }
     });
 });

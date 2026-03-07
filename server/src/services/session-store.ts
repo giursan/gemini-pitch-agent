@@ -42,6 +42,7 @@ export const sessionStore = {
         durationMs: number;
         feedbackMode: string;
         overallScore: number;
+        title: string;
     }>> {
         const snapshot = await db.collection(SESSIONS_COLLECTION)
             .orderBy('startedAt', 'desc')
@@ -57,6 +58,7 @@ export const sessionStore = {
                 durationMs: data.durationMs,
                 feedbackMode: data.feedbackMode,
                 overallScore: data.report?.overallScore ?? 0,
+                title: data.report?.title ?? `Session ${data.sessionId.slice(0, 8)}`,
             };
         });
     },
@@ -68,5 +70,13 @@ export const sessionStore = {
         const doc = await db.collection(SESSIONS_COLLECTION).doc(sessionId).get();
         if (!doc.exists) return null;
         return doc.data() as Record<string, any>;
+    },
+
+    /**
+     * Delete a session by ID.
+     */
+    async delete(sessionId: string): Promise<void> {
+        await db.collection(SESSIONS_COLLECTION).doc(sessionId).delete();
+        console.log(`Session deleted from Firestore: ${sessionId}`);
     },
 };

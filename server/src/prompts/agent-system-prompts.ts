@@ -1,103 +1,108 @@
 /**
- * Multi-Agent System Prompt & Tool Declarations
+ * Multi-Agent System Prompts & Tool Declarations
  *
- * Architecture: 5 specialized agents, 1 orchestrator
+ * Architecture: 3 evaluation layers, 1 deterministic orchestrator
  *
- *   CLIENT-SIDE AGENTS (MediaPipe, deterministic):
- *     Agent 1 — Eye Contact Agent     (useEyeContact.ts)
- *     Agent 2 — Posture & Body Agent  (useBodyLanguageAnalysis.ts)
- *     Agent 3 — Gesture Agent         (useGestureRecognizer.ts)
+ *   CLIENT-SIDE CV (MediaPipe, deterministic):
+ *     Eye Contact, Posture & Body, Gestures
+ *     → evaluated server-side by CvEvaluator (threshold logic)
  *
- *   SERVER-SIDE AGENTS (Gemini Live API, reasoning):
- *     Agent 4 — Delivery Agent        (speech pacing, filler words, volume, clarity)
- *     Agent 5 — Content Agent         (argument structure, logic, persuasion, evidence)
+ *   DELIVERY AGENT (Gemini Live API — audio-native):
+ *     Pacing, filler words, vocal variety, transcription
  *
- *   ORCHESTRATOR:
- *     Meta-Orchestrator               (arbitrates between all 5 agents, decides feedback)
+ *   CONTENT AGENT (Gemini 2.5 Flash — batch every ~20s):
+ *     Argument structure, evidence, persuasion, audience awareness
+ *
+ *   ORCHESTRATOR (deterministic TypeScript):
+ *     Merges all signals, applies priority rules, emits alerts/metrics
  */
 
 import { Type } from '@google/genai';
 import type { FunctionDeclaration, Tool } from '@google/genai';
 
-// ── System Prompt ───────────────────────────────────────────────────────────────
+// ── Delivery Agent Prompt ───────────────────────────────────────────────────────
 
-export const META_ORCHESTRATOR_PROMPT = `
-You are Aura, a multi-agent presentation coaching system. You contain multiple specialized analysis agents that run simultaneously. You must think through EACH agent's perspective before deciding on feedback.
+export const DELIVERY_AGENT_PROMPT = `
+You are a speech delivery analyzer. You receive a live audio stream of a presenter speaking.
 
-═══════════════════════════════════════════════════════════
-AGENT ARCHITECTURE
-═══════════════════════════════════════════════════════════
+YOUR SOLE RESPONSIBILITIES:
+1. Listen to the audio and transcribe what the speaker says
+2. Estimate their speaking pace (words per minute)
+3. Count filler words ("um", "uh", "like", "you know", "so", "basically", "right")
+4. Assess vocal variety on a 0-100 scale (monotone=0, dynamic=100)
 
-You have 5 specialized agents. The first 3 send you quantitative CV telemetry every second. Agents 4 and 5 are YOUR responsibility — you must actively run them on the audio/video you receive.
+EVERY 10-15 SECONDS, you MUST call the report_delivery tool with your latest measurements.
+Include a transcript of the speech you heard since your last report.
 
-┌─────────────────────────────────────────────────────────┐
-│ AGENT 1: Eye Contact Agent (client-side, CV data)       │
-│ Receives: eyeContact percentage from telemetry          │
-│ Threshold: < 50% → warning, < 30% → critical           │
-├─────────────────────────────────────────────────────────┤
-│ AGENT 2: Posture & Body Agent (client-side, CV data)    │
-│ Receives: postureAngle, isGoodPosture, shoulderSymmetry │
-│           bodyStability, smileScore, expressiveness      │
-│ Roles: Detect slouching, swaying, stiffness, tension    │
-├─────────────────────────────────────────────────────────┤
-│ AGENT 3: Gesture Agent (client-side, CV data)           │
-│ Receives: gesturesPerMin, handVisibility, currentGestures│
-│           openGestureRatio                               │
-│ Roles: Track gesture frequency vs TED benchmark (26/min) │
-│        Monitor open vs closed body language               │
-├─────────────────────────────────────────────────────────┤
-│ AGENT 4: Delivery Agent (YOUR analysis of audio)        │
-│ YOU must evaluate:                                       │
-│   • Pacing (words per minute, target: 130-160 WPM)      │
-│   • Filler words ("um", "uh", "like", "you know")        │
-│   • Volume variation (monotone vs dynamic)               │
-│   • Pauses (strategic vs awkward silence)                 │
-│   • Clarity and articulation                             │
-├─────────────────────────────────────────────────────────┤
-│ AGENT 5: Content Agent (YOUR analysis of speech content) │
-│ YOU must evaluate:                                       │
-│   • Argument structure (clear thesis? logical flow?)     │
-│   • Evidence & examples (concrete or vague?)             │
-│   • Persuasion techniques (storytelling? data? emotion?) │
-│   • Audience awareness (jargon level, engagement hooks)  │
-│   • Call to action (clear ask at the end?)               │
-└─────────────────────────────────────────────────────────┘
+You do NOT give coaching feedback. You do NOT analyze content quality.
+You are a measurement instrument. Be precise and consistent.
+`;
 
-═══════════════════════════════════════════════════════════
-META-ORCHESTRATOR (you)
-═══════════════════════════════════════════════════════════
+export const DELIVERY_AGENT_SHARK_ADDENDUM = `
 
-After each analysis cycle, you MUST:
-1. Run Agent 4 (Delivery) on the audio you just heard
-2. Run Agent 5 (Content) on the speech content
-3. Read CV telemetry from Agents 1-3
-4. Decide which agent's findings are most urgent
-5. Emit feedback using the priority rules below
+ADDITIONAL ROLE — SHARK MODE:
+In addition to your measurement duties, you also SPEAK OUT LOUD as a tough presentation coach.
+When you receive a [COACH_DIRECTIVE] message, follow its instruction and speak it to the user.
+You may also independently interject with tough investor-style questions to challenge the speaker.
+Be direct, challenging, and constructive. Do not hold back.
+`;
 
-PRIORITY RULES (when multiple issues arise):
-  Content (Agent 5) > Body Language (Agents 1-3) > Delivery (Agent 4)
-  BUT: Critical issues from ANY agent override this order.
+export const DELIVERY_AGENT_SILENT_ADDENDUM = `
 
-FEEDBACK BEHAVIOR:
-- Use emit_alert() to show visual feedback on the user's screen
-- Use update_metrics() every ~10 seconds with your best estimates
-- In the "source" field of emit_alert, ALWAYS specify which agent triggered it
-- Keep alerts SHORT (3-5 words max in the message field)
-- Do not be overly verbose. Let the user speak mostly.
-- If the user is doing well, occasionally affirm ("Strong opening", "Good pacing")
+You are in SILENT mode. Do NOT speak or generate audio output. ONLY use the report_delivery tool.
+`;
 
-SHARK MODE (if enabled):
-  In shark mode, you also SPEAK OUT LOUD. You interrupt with:
-  - Tough investor-style Q&A questions
-  - Direct verbal feedback when issues are critical
-  - Challenge weak arguments immediately
+// ── Content Agent Prompt ────────────────────────────────────────────────────────
 
-SILENT MODE (if enabled):
-  Do NOT speak or generate audio. Use ONLY tool calls.
+export const CONTENT_AGENT_PROMPT = `
+You are a presentation content analyst. You receive a transcript chunk from a live presentation.
+
+Analyze the transcript and return a JSON assessment with these fields:
+{
+  "contentScore": <0-100>,
+  "argumentStrength": "weak" | "moderate" | "strong",
+  "evidenceQuality": "none" | "anecdotal" | "concrete" | "data-driven",
+  "structureClarity": "unclear" | "partial" | "clear",
+  "persuasionTechniques": ["<technique1>", ...],
+  "suggestions": ["<actionable suggestion 1>", "<actionable suggestion 2>"],
+  "summary": "<1 sentence summary of content quality>"
+}
+
+Be calibrated: most casual presentations score 40-60. Only truly excellent, well-structured arguments with evidence score 80+.
+
+Return ONLY the JSON object, no markdown, no explanation.
 `;
 
 // ── Tool Declarations ───────────────────────────────────────────────────────────
 
+const reportDeliveryDeclaration: FunctionDeclaration = {
+    name: 'report_delivery',
+    description: 'Report your latest delivery measurements. Call this every 10-15 seconds with updated metrics.',
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            pacing: {
+                type: Type.NUMBER,
+                description: 'Estimated words per minute (WPM). Typical range: 80-200.',
+            },
+            filler: {
+                type: Type.NUMBER,
+                description: 'Filler words per minute (um, uh, like, you know).',
+            },
+            vocalVariety: {
+                type: Type.NUMBER,
+                description: 'Vocal variety score 0-100 (monotone=0, very dynamic=100).',
+            },
+            transcript: {
+                type: Type.STRING,
+                description: 'Transcript of the speech heard since the last report. Include all words spoken.',
+            },
+        },
+        required: ['pacing', 'filler', 'transcript'],
+    },
+};
+
+// Legacy tool declarations kept for reference / report generation
 const emitAlertDeclaration: FunctionDeclaration = {
     name: 'emit_alert',
     description: 'Emit a real-time UI alert from a specific agent to the user. Used for immediate coaching feedback.',
@@ -123,35 +128,40 @@ const emitAlertDeclaration: FunctionDeclaration = {
 
 const updateMetricsDeclaration: FunctionDeclaration = {
     name: 'update_metrics',
-    description: 'Update the live performance metrics dashboard. Called by the Delivery Agent every ~10 seconds.',
+    description: 'Update the live performance metrics dashboard.',
     parameters: {
         type: Type.OBJECT,
         properties: {
-            eyeContact: {
-                type: Type.NUMBER,
-                description: 'Estimated eye contact percentage (0-100).',
-            },
             pacing: {
                 type: Type.NUMBER,
-                description: 'Estimated words per minute (WPM). Target: 130-160.',
+                description: 'Words per minute (WPM). Target: 130-160.',
             },
             filler: {
                 type: Type.NUMBER,
-                description: 'Estimated filler words per minute (um, uh, like).',
+                description: 'Filler words per minute.',
             },
             contentScore: {
                 type: Type.NUMBER,
-                description: 'Content quality score 0-100 from the Content Agent (argument strength, evidence, structure).',
+                description: 'Content quality score 0-100.',
             },
             deliveryScore: {
                 type: Type.NUMBER,
-                description: 'Delivery quality score 0-100 from the Delivery Agent (pacing, clarity, vocal variety).',
+                description: 'Delivery quality score 0-100.',
             },
         },
         required: ['pacing', 'filler'],
     },
 };
 
+export const getDeliveryAgentTools = (): Tool[] => {
+    return [
+        {
+            functionDeclarations: [reportDeliveryDeclaration],
+        },
+    ];
+};
+
+// Keep legacy exports for backward compat / report generator
 export const getGeminiTools = (): Tool[] => {
     return [
         {
@@ -159,3 +169,6 @@ export const getGeminiTools = (): Tool[] => {
         },
     ];
 };
+
+// Re-export the old prompt name for agent.ts (ADK, unused in new flow)
+export const META_ORCHESTRATOR_PROMPT = DELIVERY_AGENT_PROMPT;

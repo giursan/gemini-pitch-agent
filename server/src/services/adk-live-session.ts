@@ -1,12 +1,17 @@
 import { GoogleGenAI, Modality, Session as GenAISession } from '@google/genai';
 import type { LiveServerMessage, LiveConnectConfig } from '@google/genai';
-import { META_ORCHESTRATOR_PROMPT, getGeminiTools } from '../prompts/agent-system-prompts';
+import {
+    DELIVERY_AGENT_PROMPT,
+    DELIVERY_AGENT_SHARK_ADDENDUM,
+    DELIVERY_AGENT_SILENT_ADDENDUM,
+    getDeliveryAgentTools,
+} from '../prompts/agent-system-prompts';
 
 // ── Timeline Event Types ────────────────────────────────────────────────────────
 
 export interface TimelineEvent {
     ts: number;                           // epoch ms
-    type: 'alert' | 'metrics' | 'cv_telemetry' | 'transcript' | 'system';
+    type: 'alert' | 'metrics' | 'cv_telemetry' | 'transcript' | 'system' | 'delivery_report' | 'content_report';
     data: Record<string, any>;
 }
 
@@ -20,50 +25,78 @@ export interface SessionSummary {
     cvSnapshots: Record<string, any>[];   // periodic CV telemetry snapshots
 }
 
-// ── Session Class ───────────────────────────────────────────────────────────────
+// ── Delivery Report Type ────────────────────────────────────────────────────────
+
+export interface DeliveryReport {
+    pacing: number;
+    filler: number;
+    vocalVariety?: number;
+    transcript: string;
+}
+
+// ── Delivery Agent (Gemini Live Session) ────────────────────────────────────────
 
 /**
- * Manages a single Gemini Live API session per WebSocket connection.
- * Includes a timeline logger that accumulates all events for post-session analysis.
+ * Focused Delivery Agent — manages a Gemini Live API session that is
+ * responsible ONLY for audio-based delivery analysis:
+ * - Transcription
+ * - Pacing (WPM)
+ * - Filler word counting
+ * - Shark mode spoken feedback
  */
-export class GeminiLiveSession {
+export class DeliveryAgent {
     private session: GenAISession | null = null;
-    private onMessageCallback: (msg: LiveServerMessage) => void;
     private feedbackMode: 'silent' | 'shark' = 'silent';
     private enableSpeech: boolean = true;
 
-    // Timeline
-    private timeline: TimelineEvent[] = [];
-    private cvSnapshots: Record<string, any>[] = [];
-    private sessionId: string;
-    private startedAt: number = 0;
-    private lastInjectedTelemetryTs: number = 0;
+    // Callbacks
+    private onDeliveryReport: ((report: DeliveryReport) => void) | null = null;
+    private onAudioOutput: ((base64Pcm: string) => void) | null = null;
+    private onRawMessage: ((msg: LiveServerMessage) => void) | null = null;
+
+    // Timeline (shared with Orchestrator via reference)
+    public timeline: TimelineEvent[] = [];
+    public sessionId: string;
+    public startedAt: number = 0;
 
     private static readonly MODEL = process.env.GEMINI_MODEL
         || 'models/gemini-2.5-flash-native-audio-latest';
 
     constructor(
         sessionId: string,
-        onMessageCallback: (msg: LiveServerMessage) => void,
         feedbackMode: 'silent' | 'shark' = 'silent',
-        enableSpeech: boolean = true
+        enableSpeech: boolean = true,
     ) {
         this.sessionId = sessionId;
-        this.onMessageCallback = onMessageCallback;
         this.feedbackMode = feedbackMode;
         this.enableSpeech = enableSpeech;
     }
 
+    /** Register callback for delivery reports (pacing, filler, transcript) */
+    setOnDeliveryReport(cb: (report: DeliveryReport) => void): void {
+        this.onDeliveryReport = cb;
+    }
+
+    /** Register callback for audio output (shark mode) */
+    setOnAudioOutput(cb: (base64Pcm: string) => void): void {
+        this.onAudioOutput = cb;
+    }
+
+    /** Register callback for raw Gemini messages (for forwarding) */
+    setOnRawMessage(cb: (msg: LiveServerMessage) => void): void {
+        this.onRawMessage = cb;
+    }
+
     /**
-     * Connect to the Gemini Live API and start listening for events.
+     * Connect to the Gemini Live API and start listening.
      */
     public async connect(): Promise<void> {
-        console.log(`[${this.sessionId}] Connecting to Gemini Live API (mode: ${this.feedbackMode})...`);
+        console.log(`[DeliveryAgent:${this.sessionId}] Connecting (mode: ${this.feedbackMode})...`);
         this.startedAt = Date.now();
-        this.logEvent('system', { message: 'Session started', feedbackMode: this.feedbackMode, enableSpeech: this.enableSpeech });
+        this.logEvent('system', { message: 'Delivery Agent started', feedbackMode: this.feedbackMode });
 
         if (!this.enableSpeech) {
-            console.log(`[${this.sessionId}] Speech agent disabled. Bypassing Gemini WS connection.`);
+            console.log(`[DeliveryAgent:${this.sessionId}] Speech disabled. Skipping Live API connection.`);
             return;
         }
 
@@ -71,19 +104,17 @@ export class GeminiLiveSession {
             apiKey: process.env.GOOGLE_GENAI_API_KEY,
         });
 
-        // Build system instruction with feedback mode context
-        const modeInstruction = this.feedbackMode === 'shark'
-            ? `\n\nYou are in SHARK MODE. You MUST speak out loud to give feedback and interrupt with tough questions. Be direct and challenging.`
-            : `\n\nYou are in SILENT COACH MODE. Do NOT speak or generate audio. Use ONLY the emit_alert and update_metrics tool calls to provide feedback silently through the UI.`;
+        // Build focused system instruction
+        const modeAddendum = this.feedbackMode === 'shark'
+            ? DELIVERY_AGENT_SHARK_ADDENDUM
+            : DELIVERY_AGENT_SILENT_ADDENDUM;
 
-        const transcriptionInstruction = `\n\nCRITICAL: You are receiving a live audio stream of the user speaking. You must actively listen to the presentation. You must regularly evaluate their pacing (Words Per Minute), count their filler words ("um", "uh", "like"), and grade their delivery and content. You MUST call the update_metrics tool frequently (every 10-15 seconds) to update the UI dashboard with these metrics. This is mandatory for the experience to work.`;
-
-        const finalSystemInstruction = META_ORCHESTRATOR_PROMPT + modeInstruction + transcriptionInstruction;
+        const systemInstruction = DELIVERY_AGENT_PROMPT + modeAddendum;
 
         const config: LiveConnectConfig = {
             responseModalities: ['AUDIO'] as any,
-            systemInstruction: { parts: [{ text: finalSystemInstruction }] },
-            tools: getGeminiTools(),
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            tools: getDeliveryAgentTools(),
         };
 
         if (this.feedbackMode === 'shark') {
@@ -97,95 +128,51 @@ export class GeminiLiveSession {
         }
 
         this.session = await ai.live.connect({
-            model: GeminiLiveSession.MODEL,
+            model: DeliveryAgent.MODEL,
             config,
             callbacks: {
                 onopen: () => {
-                    console.log(`[${this.sessionId}] Gemini Live WebSocket opened.`);
+                    console.log(`[DeliveryAgent:${this.sessionId}] Live WebSocket opened.`);
                 },
                 onmessage: (message: LiveServerMessage) => {
-                    // Log tool calls to the timeline
+                    // Handle report_delivery tool calls
                     if (message.toolCall?.functionCalls) {
                         for (const fc of message.toolCall.functionCalls) {
-                            if (fc.name === 'emit_alert') {
-                                this.logEvent('alert', fc.args || {});
-                            } else if (fc.name === 'update_metrics') {
-                                this.logEvent('metrics', fc.args || {});
+                            if (fc.name === 'report_delivery') {
+                                const args = fc.args as Record<string, any> || {};
+                                const report: DeliveryReport = {
+                                    pacing: Number(args.pacing) || 0,
+                                    filler: Number(args.filler) || 0,
+                                    vocalVariety: args.vocalVariety != null ? Number(args.vocalVariety) : undefined,
+                                    transcript: String(args.transcript || ''),
+                                };
+                                this.logEvent('delivery_report', report);
+                                this.onDeliveryReport?.(report);
                             }
                         }
                     }
 
-                    // Log transcriptions
-                    if (message.serverContent?.modelTurn?.parts) {
-                        const textParts = message.serverContent.modelTurn.parts
-                            .filter((p: any) => p.text)
-                            .map((p: any) => p.text);
-                        if (textParts.length > 0) {
-                            this.logEvent('transcript', { speaker: 'model', text: textParts.join('') });
+                    // Forward audio output for shark mode
+                    if (this.feedbackMode === 'shark' && message.serverContent?.modelTurn?.parts) {
+                        for (const part of message.serverContent.modelTurn.parts) {
+                            if (part.inlineData?.mimeType?.startsWith('audio/') && part.inlineData.data) {
+                                this.onAudioOutput?.(part.inlineData.data);
+                            }
                         }
                     }
 
-                    this.onMessageCallback(message);
+                    // Forward raw message to orchestrator for any additional processing
+                    this.onRawMessage?.(message);
                 },
                 onerror: (e: ErrorEvent) => {
-                    console.error(`[${this.sessionId}] Gemini Live error:`, e.error);
+                    console.error(`[DeliveryAgent:${this.sessionId}] Error:`, e.error);
                     this.logEvent('system', { message: 'WebSocket error', error: String(e.error) });
                 },
                 onclose: (e: any) => {
-                    console.log(`[${this.sessionId}] Gemini Live WebSocket closed. Code: ${e?.code}, Reason: ${e?.reason}`);
+                    console.log(`[DeliveryAgent:${this.sessionId}] WebSocket closed. Code: ${e?.code}`);
                 },
             },
         });
-    }
-
-    /**
-     * Log a CV telemetry snapshot AND inject it into Gemini's context
-     * so the orchestrator can reason about agents 1-3.
-     */
-    public logCvTelemetry(telemetry: Record<string, any>): void {
-        this.cvSnapshots.push({ ts: Date.now(), ...telemetry });
-        this.logEvent('cv_telemetry', telemetry);
-
-        // Inject structured CV data into Gemini's conversation context
-        // Inject structured CV data into Gemini's conversation context only every 10 seconds
-        // to avoid locking the conversation turn indefinitely and blowing up tokens
-        if (this.session && (Date.now() - this.lastInjectedTelemetryTs > 10000)) {
-            this.lastInjectedTelemetryTs = Date.now();
-            const report = [
-                `[AGENT_TELEMETRY]`,
-                `eye_contact=${telemetry.eyeContact ?? '--'}%`,
-                `posture_angle=${telemetry.postureAngle ?? '--'}°`,
-                `good_posture=${telemetry.isGoodPosture ?? '--'}`,
-                `gestures_per_min=${telemetry.gesturesPerMin ?? '--'}`,
-                `hand_visibility=${Math.round((telemetry.handVisibility ?? 0) * 100)}%`,
-                `smile=${Math.round((telemetry.smileScore ?? 0) * 100)}%`,
-                `stability=${Math.round((telemetry.bodyStability ?? 0) * 100) || '--'}%`,
-                `overall_cv_score=${telemetry.overallScore ?? '--'}/100`,
-                `gestures=[${(telemetry.currentGestures || []).join(',')}]`,
-                `open_gesture_ratio=${Math.round((telemetry.openGestureRatio ?? 0) * 100)}%`,
-            ].join(' ');
-
-            this.session.sendClientContent({
-                turns: [{ role: 'user', parts: [{ text: report }] }],
-                turnComplete: true,
-            });
-        }
-    }
-
-    /**
-     * Get the full session summary for report generation.
-     */
-    public getSessionSummary(): SessionSummary {
-        const endedAt = Date.now();
-        return {
-            sessionId: this.sessionId,
-            startedAt: this.startedAt,
-            endedAt,
-            durationMs: endedAt - this.startedAt,
-            feedbackMode: this.feedbackMode,
-            timeline: this.timeline,
-            cvSnapshots: this.cvSnapshots,
-        };
     }
 
     // ── Media Methods ───────────────────────────────────────────────────────
@@ -197,15 +184,14 @@ export class GeminiLiveSession {
         });
     }
 
-    public sendVideoFrame(jpegData: string): void {
-        // Disabled: gemini-2.5-flash-native-audio models do not support video modality.
-        // We rely on the CV telemetry injected via logCvTelemetry instead.
-        /*
+    /** Inject a coaching directive from the orchestrator (shark mode) */
+    public injectCoachingDirective(text: string): void {
         if (!this.session) return;
-        this.session.sendRealtimeInput({
-            video: { mimeType: 'image/jpeg', data: jpegData },
+        this.logEvent('system', { message: `Coach directive: ${text}` });
+        this.session.sendClientContent({
+            turns: [{ role: 'user', parts: [{ text: `[COACH_DIRECTIVE] ${text}` }] }],
+            turnComplete: true,
         });
-        */
     }
 
     public sendTextMessage(text: string): void {
@@ -224,16 +210,29 @@ export class GeminiLiveSession {
 
     public disconnect(): void {
         if (this.session) {
-            this.logEvent('system', { message: 'Session ended' });
-            console.log(`[${this.sessionId}] Disconnecting Gemini Live session...`);
+            this.logEvent('system', { message: 'Delivery Agent disconnected' });
+            console.log(`[DeliveryAgent:${this.sessionId}] Disconnecting...`);
             this.session.close();
             this.session = null;
         }
     }
 
+    public getSessionSummary(): SessionSummary {
+        const endedAt = Date.now();
+        return {
+            sessionId: this.sessionId,
+            startedAt: this.startedAt,
+            endedAt,
+            durationMs: endedAt - this.startedAt,
+            feedbackMode: this.feedbackMode,
+            timeline: this.timeline,
+            cvSnapshots: [],
+        };
+    }
+
     // ── Private ─────────────────────────────────────────────────────────────
 
-    private logEvent(type: TimelineEvent['type'], data: Record<string, any>): void {
+    public logEvent(type: TimelineEvent['type'], data: Record<string, any>): void {
         this.timeline.push({ ts: Date.now(), type, data });
     }
 }

@@ -6,6 +6,7 @@ Based on the timeline of events below, generate a comprehensive analysis report.
 
 Return ONLY valid JSON in the following structure (no markdown, no code fences):
 {
+  "title": "<catchy, descriptive title for this specific presentation practice>",
   "overallScore": <number 0-100>,
   "duration": "<formatted string like '2m 30s'>",
   "categories": {

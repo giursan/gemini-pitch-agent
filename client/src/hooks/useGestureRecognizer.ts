@@ -49,6 +49,7 @@ export function useGestureRecognizer(
     const [metrics, setMetrics] = useState<GestureMetrics>(DEFAULT_METRICS);
     const recognizerRef = useRef<any>(null);
     const rafRef = useRef<number | null>(null);
+    const lastTimestampRef = useRef<number>(0);
     const countsRef = useRef<Record<string, number>>({});
     const totalFramesRef = useRef(0);
     const openFramesRef = useRef(0);
@@ -95,14 +96,32 @@ export function useGestureRecognizer(
                 recognizerRef.current = recognizer;
                 setMetrics(prev => ({ ...prev, isReady: true }));
 
-                // Start processing frames
+                // Start processing frames (throttled to ~10 FPS — sufficient for gestures)
+                let lastProcessTime = 0;
+                const FRAME_INTERVAL_MS = 100; // process at most every 100ms
+
                 const processFrame = () => {
                     if (cancelled) return;
+
+                    const now = performance.now();
+                    if (now - lastProcessTime < FRAME_INTERVAL_MS) {
+                        rafRef.current = requestAnimationFrame(processFrame);
+                        return;
+                    }
+                    lastProcessTime = now;
 
                     const video = videoRef.current;
                     if (video && !video.paused && !video.ended && video.readyState >= 2 && recognizerRef.current) {
                         try {
-                            const result = recognizerRef.current.recognizeForVideo(video, performance.now());
+                            // Use integer ms timestamp, guaranteed monotonic at 10 FPS
+                            const ts = Math.round(now);
+                            if (ts <= lastTimestampRef.current) {
+                                // Still a collision somehow — skip this frame entirely
+                                rafRef.current = requestAnimationFrame(processFrame);
+                                return;
+                            }
+                            lastTimestampRef.current = ts;
+                            const result = recognizerRef.current.recognizeForVideo(video, ts);
 
                             const gestures: GestureResult[] = [];
                             let hasOpen = false;

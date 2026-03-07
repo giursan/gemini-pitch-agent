@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Inbox, Clock, Zap, EyeOff, ArrowRight, X, Lightbulb, ChevronLeft } from 'lucide-react';
+import { Inbox, Clock, Zap, EyeOff, ArrowRight, X, Lightbulb, ChevronLeft, Trash, Calendar, Star, Type, Search, ChevronDown, Check, SlidersHorizontal } from 'lucide-react';
 import ReportView from '../ReportView';
 
 interface SessionEntry {
@@ -12,7 +12,10 @@ interface SessionEntry {
     durationMs: number;
     feedbackMode: string;
     overallScore: number;
+    title: string;
 }
+
+type SortOption = 'newest' | 'oldest' | 'score-high' | 'score-low' | 'title-az' | 'title-za';
 
 function formatDuration(ms: number): string {
     const secs = Math.floor(ms / 1000);
@@ -25,6 +28,10 @@ export default function HistoryPage() {
     const [sessions, setSessions] = useState<SessionEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedReport, setSelectedReport] = useState<Record<string, any> | null>(null);
+    const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+    const [sortOption, setSortOption] = useState<SortOption>('newest');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [isSortOpen, setIsSortOpen] = useState(false);
 
     useEffect(() => {
         fetch('http://localhost:8080/sessions')
@@ -40,6 +47,37 @@ export default function HistoryPage() {
         const res = await fetch(`http://localhost:8080/sessions/${sessionId}`);
         const data = await res.json();
         setSelectedReport(data);
+    };
+
+    const deleteSession = async (sessionId: string) => {
+        await fetch(`http://localhost:8080/sessions/${sessionId}`, { method: 'DELETE' });
+        setSessions(sessions.filter(s => s.sessionId !== sessionId));
+    };
+
+    const filteredSessions = sessions.filter(s =>
+        s.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        new Date(s.startedAt).toLocaleDateString().includes(searchQuery)
+    );
+
+    const sortedSessions = [...filteredSessions].sort((a, b) => {
+        switch (sortOption) {
+            case 'newest': return b.startedAt - a.startedAt;
+            case 'oldest': return a.startedAt - b.startedAt;
+            case 'score-high': return b.overallScore - a.overallScore;
+            case 'score-low': return a.overallScore - b.overallScore;
+            case 'title-az': return a.title.localeCompare(b.title);
+            case 'title-za': return b.title.localeCompare(a.title);
+            default: return 0;
+        }
+    });
+
+    const sortLabels: Record<SortOption, { label: string, icon: any }> = {
+        'newest': { label: 'Newest First', icon: Calendar },
+        'oldest': { label: 'Oldest First', icon: Calendar },
+        'score-high': { label: 'Highest Score', icon: Star },
+        'score-low': { label: 'Lowest Score', icon: Star },
+        'title-az': { label: 'A to Z', icon: Type },
+        'title-za': { label: 'Z to A', icon: Type },
     };
 
     if (loading) {
@@ -65,7 +103,7 @@ export default function HistoryPage() {
                 </Link>
             </header>
 
-            <main className="max-w-4xl mx-auto px-8 py-12">
+            <main className="max-w-full px-8 py-12">
                 {sessions.length === 0 ? (
                     <div className="text-center py-32 bg-white rounded-lg border border-neutral-200 shadow-sm flex flex-col items-center gap-4">
                         <div className="w-20 h-20 rounded-full bg-neutral-50 flex items-center justify-center border border-neutral-100"><Inbox className="w-10 h-10 text-neutral-400" /></div>
@@ -76,15 +114,78 @@ export default function HistoryPage() {
                         <Link href="/practice" className="mt-4 text-google-blue font-bold text-sm hover:underline flex items-center gap-1">Start Practicing Now <ArrowRight className="w-4 h-4" /></Link>
                     </div>
                 ) : (
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between px-4 mb-2">
-                            <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">{sessions.length} RECORDED SESSIONS</span>
+                    <div className="space-y-6">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+                            <div className="relative flex-1 max-w-full">
+                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Search sessions..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full pl-11 pr-4 py-3 bg-white border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-google-blue/20 focus:border-google-blue transition-all shadow-sm"
+                                />
+                            </div>
+
+                            <div className="flex items-center gap-4">
+                                <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest whitespace-nowrap">
+                                    {filteredSessions.length} RESULTS
+                                </span>
+
+                                <div className="relative">
+                                    <button
+                                        onClick={() => setIsSortOpen(!isSortOpen)}
+                                        className="flex items-center gap-2 px-4 py-3 bg-white border border-neutral-200 rounded-lg text-sm font-bold text-neutral-700 hover:border-neutral-300 transition-all shadow-sm active:scale-95"
+                                    >
+                                        <SlidersHorizontal className="w-4 h-4 text-google-blue" />
+                                        <span>{sortLabels[sortOption].label}</span>
+                                        <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isSortOpen ? 'rotate-180' : ''}`} />
+                                    </button>
+
+                                    {isSortOpen && (
+                                        <>
+                                            <div
+                                                className="fixed inset-0 z-10"
+                                                onClick={() => setIsSortOpen(false)}
+                                            />
+                                            <div className="absolute right-0 mt-2 w-56 bg-white border border-neutral-200 rounded-lg shadow-xl z-20 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                                <div className="p-2">
+                                                    {(Object.entries(sortLabels) as [SortOption, any][]).map(([key, { label, icon: Icon }]) => (
+                                                        <button
+                                                            key={key}
+                                                            onClick={() => {
+                                                                setSortOption(key as SortOption);
+                                                                setIsSortOpen(false);
+                                                            }}
+                                                            className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors hover:bg-neutral-50"
+                                                        >
+                                                            <div className="flex items-center gap-3">
+                                                                <Icon className={`w-4 h-4 ${sortOption === key ? 'text-google-blue' : 'text-neutral-400'}`} />
+                                                                <span className={sortOption === key ? 'text-google-blue font-bold' : 'text-neutral-600'}>
+                                                                    {label}
+                                                                </span>
+                                                            </div>
+                                                            {sortOption === key && <Check className="w-4 h-4 text-google-blue" />}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
                         </div>
-                        {sessions.map((s) => (
-                            <button
+
+                        {sortedSessions.length === 0 ? (
+                            <div className="text-center py-20 bg-white rounded-lg border border-dashed border-neutral-200">
+                                <p className="text-neutral-400 font-medium font-sans">No sessions match your search.</p>
+                            </div>
+                        ) : null}
+                        {sortedSessions.map((s) => (
+                            <div
                                 key={s.sessionId}
                                 onClick={() => viewReport(s.sessionId)}
-                                className="w-full bg-white border border-neutral-200 rounded-lg p-6 flex items-center gap-6 group hover:shadow-md hover:border-google-blue/40 hover:-translate-y-0.5 transition-all duration-300 text-left"
+                                className="w-full bg-white border border-neutral-200 rounded-lg p-6 flex items-center gap-6 group hover:shadow-md hover:border-google-blue/40 hover:-translate-y-0.5 transition-all duration-300 text-left cursor-pointer"
                             >
                                 <div className={`w-16 h-16 rounded-lg flex flex-col items-center justify-center border font-sans shadow-sm transition-colors ${s.overallScore >= 70 ? 'bg-google-green/5 border-neutral-200 text-google-green' :
                                     s.overallScore >= 40 ? 'bg-google-blue/5 border-neutral-200 text-google-blue' :
@@ -95,7 +196,11 @@ export default function HistoryPage() {
                                 </div>
 
                                 <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-bold text-neutral-800 tracking-tight group-hover:text-google-blue transition-colors">
+                                    <div className="text-lg font-black text-neutral-900 tracking-tight group-hover:text-google-blue transition-colors truncate mb-1">
+                                        {s.title}
+                                    </div>
+                                    <div className="text-xs font-bold text-neutral-500 tracking-tight flex items-center gap-2">
+                                        <Calendar className="w-3.5 h-3.5" />
                                         {new Date(s.startedAt).toLocaleDateString('en-US', {
                                             weekday: 'short',
                                             month: 'short',
@@ -119,7 +224,15 @@ export default function HistoryPage() {
                                 <div className="w-10 h-10 rounded-full flex items-center justify-center bg-neutral-50 group-hover:bg-google-blue group-hover:text-white transition-all text-neutral-300 border border-neutral-200 group-hover:border-google-blue">
                                     <ArrowRight className="w-5 h-5" />
                                 </div>
-                            </button>
+                                <div className="w-10 h-10 rounded-full flex items-center justify-center bg-neutral-50 group-hover:bg-google-red group-hover:text-white transition-all text-neutral-300 border border-neutral-200 group-hover:border-google-red">
+                                    <button onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSessionToDelete(s.sessionId);
+                                    }}>
+                                        <Trash className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            </div>
                         ))}
                     </div>
                 )}
@@ -197,6 +310,38 @@ export default function HistoryPage() {
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Confirm Delete Modal */}
+                {sessionToDelete && (
+                    <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+                        <div className="bg-white rounded-lg p-8 max-w-sm w-full shadow-2xl border border-neutral-100 animate-in zoom-in-95 duration-200">
+                            <div className="w-16 h-16 bg-google-red/10 rounded-full flex items-center justify-center mb-6 mx-auto">
+                                <Trash className="w-8 h-8 text-google-red" />
+                            </div>
+                            <h3 className="text-xl font-bold text-neutral-900 text-center mb-2">Delete Session?</h3>
+                            <p className="text-neutral-500 text-center text-sm font-medium mb-8 leading-relaxed">
+                                This will permanently remove this practice session and all its analysis. This action cannot be undone.
+                            </p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setSessionToDelete(null)}
+                                    className="flex-1 px-6 py-3 rounded-xl text-sm font-bold bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        deleteSession(sessionToDelete);
+                                        setSessionToDelete(null);
+                                    }}
+                                    className="flex-1 px-6 py-3 rounded-xl text-sm font-bold bg-google-red text-white hover:bg-red-600 transition-colors shadow-lg shadow-google-red/20"
+                                >
+                                    Delete
+                                </button>
                             </div>
                         </div>
                     </div>

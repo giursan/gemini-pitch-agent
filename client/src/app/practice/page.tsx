@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
-import { Eye, Mic, TrendingUp, Pause, Hand, Maximize, Minimize, ActivitySquare, Terminal, Send, MessageSquare } from 'lucide-react';
+import { Eye, Mic, TrendingUp, Pause, Hand, Maximize, Minimize, ActivitySquare, Terminal, Send, MessageSquare, Play, Square } from 'lucide-react';
 import { useEyeContact } from '../../hooks/useEyeContact';
 import { useBodyLanguageAnalysis, TED_BENCHMARKS } from '../../hooks/useBodyLanguageAnalysis';
 import { useGestureRecognizer } from '../../hooks/useGestureRecognizer';
@@ -202,41 +202,78 @@ export default function Home() {
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
 
-        // Server protocol messages
-        if (data.type === 'session_started') {
-          setSessionId(data.sessionId);
-          setSessionState('recording');
-          setAlerts([]);
-          setFeed([{ timestamp: Date.now(), source: 'System', message: 'Session started. Orchestrator initializing...' }]);
-          setReport(null);
-          startMediaExtraction(stream, ws);
-          return;
-        }
-        if (data.type === 'session_paused') {
-          setSessionState('paused');
-          return;
-        }
-        if (data.type === 'session_resumed') {
-          setSessionState('recording');
-          return;
-        }
-        if (data.type === 'generating_report') {
-          setSessionState('generating');
-          cleanupMedia();
-          return;
-        }
-        if (data.type === 'session_report') {
-          setReport(data.report);
-          setSessionState('report');
-          return;
-        }
-        if (data.type === 'error') {
-          console.error('Server error:', data.message);
-          setSessionState('idle');
-          return;
+        switch (data.type) {
+          // ── Server Protocol Messages ──────────────────────────────
+          case 'session_started':
+            setSessionId(data.sessionId);
+            setSessionState('recording');
+            setAlerts([]);
+            setFeed([{ timestamp: Date.now(), source: 'System', message: 'Multi-agent session started. Delivery + Content + CV agents active.' }]);
+            setReport(null);
+            startMediaExtraction(stream, ws);
+            return;
+
+          case 'session_paused':
+            setSessionState('paused');
+            return;
+
+          case 'session_resumed':
+            setSessionState('recording');
+            return;
+
+          case 'generating_report':
+            setSessionState('generating');
+            cleanupMedia();
+            return;
+
+          case 'session_report':
+            setReport(data.report);
+            setSessionState('report');
+            return;
+
+          case 'error':
+            console.error('Server error:', data.message);
+            setSessionState('idle');
+            return;
+
+          // ── Orchestrator Alert Messages ────────────────────────────
+          case 'alert': {
+            const id = data.id || `alert-${++alertIdRef.current}`;
+            const source = data.source || 'orchestrator';
+            setAlerts(prev => [...prev, {
+              id,
+              severity: data.severity || 'info',
+              message: `[${source}] ${data.message || ''}`,
+              timestamp: data.timestamp || Date.now(),
+            }]);
+            setFeed(prev => [...prev, { timestamp: Date.now(), source, message: `Alert: ${data.message}` }]);
+            return;
+          }
+
+          // ── Orchestrator Metrics Messages ──────────────────────────
+          case 'metrics':
+            setSessionMetrics(prev => ({
+              pacing: data.pacing ?? prev.pacing,
+              filler: data.filler ?? prev.filler,
+              contentScore: data.contentScore ?? prev.contentScore,
+              deliveryScore: data.deliveryScore ?? prev.deliveryScore,
+            }));
+            return;
+
+          // ── Shark Mode Audio Output ────────────────────────────────
+          case 'audio_output':
+            if (feedbackModeRef.current === 'shark' && data.data) {
+              playGeminiAudio(data.data);
+            }
+            return;
+
+          // ── Chat Replies ───────────────────────────────────────────
+          case 'chat_reply':
+            setChatMessages(prev => [...prev, { role: 'gemini', text: data.text }]);
+            return;
         }
 
-        // Gemini Live API messages — tool calls
+        // Legacy: handle raw Gemini messages (tool calls) for backward compat
         if (data.toolCall?.functionCalls) {
           for (const fc of data.toolCall.functionCalls) {
             if (fc.name === 'emit_alert') {
@@ -256,23 +293,17 @@ export default function Home() {
                 contentScore: fc.args?.contentScore ?? prev.contentScore,
                 deliveryScore: fc.args?.deliveryScore ?? prev.deliveryScore,
               }));
-              setFeed(prev => [...prev, { timestamp: Date.now(), source: 'Orchestrator', message: 'Updated performance metrics.' }]);
             }
           }
         }
 
-        // Gemini Live API messages — audio output (Shark Mode)
+        // Legacy: handle shark mode audio from raw Gemini messages
         if (feedbackModeRef.current === 'shark' && data.serverContent?.modelTurn?.parts) {
           for (const part of data.serverContent.modelTurn.parts) {
             if (part.inlineData?.mimeType?.startsWith('audio/') && part.inlineData.data) {
               playGeminiAudio(part.inlineData.data);
             }
           }
-        }
-        // Gemini Chat Replies
-        if (data.type === 'chat_reply') {
-          setChatMessages(prev => [...prev, { role: 'gemini', text: data.text }]);
-          return;
         }
       };
 
@@ -453,6 +484,42 @@ export default function Home() {
             >
               {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
             </button>
+
+            {/* Floating Fullscreen Controls */}
+            {isFullscreen && isActive && (
+              <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 px-6 py-4 bg-black/40 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl animate-in slide-in-from-bottom-10 duration-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                {sessionState === 'recording' ? (
+                  <button
+                    onClick={handlePause}
+                    className="flex items-center gap-2.5 px-6 py-3 bg-white text-neutral-900 rounded-xl text-sm font-bold shadow-lg hover:scale-105 transition-all active:scale-95"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center">
+                      <Pause className="w-4 h-4 fill-neutral-900" />
+                    </div>
+                    PAUSE SESSION
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleResume}
+                    className="flex items-center gap-2.5 px-6 py-3 bg-google-blue text-white rounded-xl text-sm font-bold shadow-lg shadow-google-blue/30 hover:scale-105 transition-all active:scale-95"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                      <Play className="w-4 h-4 fill-white" />
+                    </div>
+                    RESUME SESSION
+                  </button>
+                )}
+                <button
+                  onClick={handleEnd}
+                  className="flex items-center gap-2.5 px-6 py-3 bg-google-red text-white rounded-xl text-sm font-bold shadow-lg shadow-google-red/30 hover:scale-105 transition-all active:scale-95"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                    <Square className="w-4 h-4 fill-white" />
+                  </div>
+                  STOP & ANALYZE
+                </button>
+              </div>
+            )}
 
             {/* Status Badges - Material Design Style */}
             <div className="absolute top-6 left-6 flex flex-col gap-3 z-20">
