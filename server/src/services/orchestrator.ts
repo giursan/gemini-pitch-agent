@@ -14,10 +14,17 @@ import type { LiveServerMessage } from '@google/genai';
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 
+export interface AgentSelection {
+    eyeContact: boolean;
+    posture: boolean;
+    gestures: boolean;
+    speech: boolean;
+}
+
 interface OrchestratorConfig {
     sessionId: string;
     feedbackMode: 'silent' | 'shark';
-    enableSpeech: boolean;
+    agents: AgentSelection;
     ws: WebSocket;
 }
 
@@ -94,30 +101,38 @@ export class Orchestrator {
         this.deliveryAgent = new DeliveryAgent(
             config.sessionId,
             config.feedbackMode,
-            config.enableSpeech,
+            config.agents.speech,
         );
         this.contentAgent = new ContentAgent();
         this.cvEvaluator = new CvEvaluator();
 
-        // Wire up delivery agent callbacks
-        this.deliveryAgent.setOnDeliveryReport((report) => this.handleDeliveryReport(report));
-        this.deliveryAgent.setOnAudioOutput((pcm) => this.forwardAudioToClient(pcm));
-        this.deliveryAgent.setOnRawMessage((msg) => this.handleRawGeminiMessage(msg));
+        // Wire up delivery agent callbacks (only meaningful if speech is enabled)
+        if (config.agents.speech) {
+            this.deliveryAgent.setOnDeliveryReport((report) => this.handleDeliveryReport(report));
+            this.deliveryAgent.setOnAudioOutput((pcm) => this.forwardAudioToClient(pcm));
+            this.deliveryAgent.setOnRawMessage((msg) => this.handleRawGeminiMessage(msg));
+        }
     }
 
     /**
      * Start the orchestrator: connect the Delivery Agent and start periodic analysis.
      */
     async start(): Promise<void> {
-        console.log(`[Orchestrator:${this.config.sessionId}] Starting multi-agent session...`);
+        const agents = this.config.agents;
+        const enabledList = Object.entries(agents).filter(([, v]) => v).map(([k]) => k);
+        console.log(`[Orchestrator:${this.config.sessionId}] Starting session (agents: ${enabledList.join(', ')})...`);
 
-        // Connect Delivery Agent
-        await this.deliveryAgent.connect();
+        // Connect Delivery Agent only if speech is enabled
+        if (agents.speech) {
+            await this.deliveryAgent.connect();
+        }
 
-        // Start periodic content analysis
-        this.contentAnalysisInterval = setInterval(() => {
-            if (!this.isPaused) this.runContentAnalysis();
-        }, Orchestrator.CONTENT_ANALYSIS_INTERVAL_MS);
+        // Start periodic content analysis only if speech is enabled (needs transcript)
+        if (agents.speech) {
+            this.contentAnalysisInterval = setInterval(() => {
+                if (!this.isPaused) this.runContentAnalysis();
+            }, Orchestrator.CONTENT_ANALYSIS_INTERVAL_MS);
+        }
 
         // Start periodic metrics emission
         this.metricsInterval = setInterval(() => {
@@ -129,7 +144,7 @@ export class Orchestrator {
 
     /** Handle incoming audio chunks from the client */
     handleAudio(pcmData: string): void {
-        if (this.isPaused) return;
+        if (this.isPaused || !this.config.agents.speech) return;
         this.deliveryAgent.sendAudioChunk(pcmData);
     }
 
@@ -140,8 +155,11 @@ export class Orchestrator {
         this.cvSnapshots.push({ ts: Date.now(), ...telemetry });
         this.deliveryAgent.logEvent('cv_telemetry', telemetry);
 
-        // Run deterministic CV evaluation
-        const signals = this.cvEvaluator.evaluate(telemetry as CvTelemetry);
+        // Run deterministic CV evaluation with agent filter
+        const signals = this.cvEvaluator.evaluate(
+            telemetry as CvTelemetry,
+            this.config.agents,
+        );
 
         // Process any triggered alerts
         for (const signal of signals) {

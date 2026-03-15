@@ -63,12 +63,17 @@ wss.on('connection', (ws: WebSocket) => {
                 case 'session_start': {
                     const sessionId = randomUUID();
                     const feedbackMode = data.feedbackMode || 'silent';
-                    const enableSpeech = data.agents?.speech ?? true;
+                    const agents = {
+                        eyeContact: data.agents?.eyeContact ?? true,
+                        posture: data.agents?.posture ?? true,
+                        gestures: data.agents?.gestures ?? true,
+                        speech: data.agents?.speech ?? true,
+                    };
 
                     orchestrator = new Orchestrator({
                         sessionId,
                         feedbackMode,
-                        enableSpeech,
+                        agents,
                         ws,
                     });
 

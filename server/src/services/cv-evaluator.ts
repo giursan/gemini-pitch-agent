@@ -49,13 +49,14 @@ export class CvEvaluator {
     /**
      * Evaluate a CV telemetry snapshot and return any triggered signals.
      * Called every ~1 second from the orchestrator.
+     * When agents is provided, only evaluates signals for enabled agents.
      */
-    evaluate(telemetry: CvTelemetry): OrchestratorSignal[] {
+    evaluate(telemetry: CvTelemetry, agents?: { eyeContact: boolean; posture: boolean; gestures: boolean; speech: boolean }): OrchestratorSignal[] {
         const signals: OrchestratorSignal[] = [];
         const now = Date.now();
 
         // ── Eye Contact ─────────────────────────────────────────────────
-        if (now - this.lastEyeAlertTs > 15000) { // max 1 eye alert per 15s
+        if ((!agents || agents.eyeContact) && now - this.lastEyeAlertTs > 15000) {
             if (telemetry.eyeContact < EYE_CONTACT_CRITICAL) {
                 signals.push({ source: 'eye_contact', severity: 'critical', message: 'Look at the camera' });
                 this.lastEyeAlertTs = now;
@@ -66,26 +67,28 @@ export class CvEvaluator {
         }
 
         // ── Posture ─────────────────────────────────────────────────────
-        if (!telemetry.isGoodPosture) {
-            if (!this.badPostureSince) {
-                this.badPostureSince = now;
-            } else if (now - this.badPostureSince > POSTURE_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > 20000) {
-                signals.push({ source: 'posture', severity: 'warning', message: 'Straighten your posture' });
-                this.lastPostureAlertTs = now;
-                this.badPostureSince = null; // reset so we don't spam
+        if (!agents || agents.posture) {
+            if (!telemetry.isGoodPosture) {
+                if (!this.badPostureSince) {
+                    this.badPostureSince = now;
+                } else if (now - this.badPostureSince > POSTURE_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > 20000) {
+                    signals.push({ source: 'posture', severity: 'warning', message: 'Straighten your posture' });
+                    this.lastPostureAlertTs = now;
+                    this.badPostureSince = null;
+                }
+            } else {
+                this.badPostureSince = null;
             }
-        } else {
-            this.badPostureSince = null;
-        }
 
-        // Body stability
-        if (telemetry.bodyStability !== undefined && telemetry.bodyStability < STABILITY_WARNING && now - this.lastPostureAlertTs > 20000) {
-            signals.push({ source: 'posture', severity: 'info', message: 'Reduce swaying' });
-            this.lastPostureAlertTs = now;
+            // Body stability
+            if (telemetry.bodyStability !== undefined && telemetry.bodyStability < STABILITY_WARNING && now - this.lastPostureAlertTs > 20000) {
+                signals.push({ source: 'posture', severity: 'info', message: 'Reduce swaying' });
+                this.lastPostureAlertTs = now;
+            }
         }
 
         // ── Gestures ────────────────────────────────────────────────────
-        if (now - this.lastGestureAlertTs > 30000) { // max 1 gesture alert per 30s
+        if ((!agents || agents.gestures) && now - this.lastGestureAlertTs > 30000) {
             if (telemetry.gesturesPerMin > 0 && telemetry.gesturesPerMin < GESTURE_LOW_WARN) {
                 signals.push({ source: 'gesture', severity: 'info', message: 'Use more hand gestures' });
                 this.lastGestureAlertTs = now;

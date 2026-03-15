@@ -54,11 +54,36 @@ export function useGestureRecognizer(
     const totalFramesRef = useRef(0);
     const openFramesRef = useRef(0);
     const closedFramesRef = useRef(0);
+    const isProcessingRef = useRef(false);
+    const consecutiveErrorsRef = useRef(0);
 
     useEffect(() => {
         if (!enabled || typeof window === 'undefined') return;
 
         let cancelled = false;
+
+        // ── Global error interceptor ────────────────────────────────────
+        // MediaPipe's tasks-vision WASM throws errors asynchronously via
+        // finishProcessing callbacks that escape our try-catch.  Next.js
+        // dev mode catches these globally and shows the error overlay.
+        // We intercept them here to suppress the overlay.
+        const suppressWasmError = (event: ErrorEvent) => {
+            const msg = event.message || '';
+            const stack = event.error?.stack || '';
+            const isMediaPipeWasm =
+                msg.includes('TensorFlow Lite') ||
+                msg.includes('XNNPACK') ||
+                msg.includes('finishProcessing') ||
+                stack.includes('vision_bundle') ||
+                stack.includes('finishProcessing') ||
+                stack.includes('recognizeForVideo');
+            if (isMediaPipeWasm) {
+                event.preventDefault();   // prevent Next.js error overlay
+                event.stopImmediatePropagation();
+                return true;              // mark as handled
+            }
+        };
+        window.addEventListener('error', suppressWasmError, true); // capture phase
 
         const init = async () => {
             try {
@@ -94,34 +119,58 @@ export function useGestureRecognizer(
                 }
 
                 recognizerRef.current = recognizer;
+                consecutiveErrorsRef.current = 0;
                 setMetrics(prev => ({ ...prev, isReady: true }));
 
-                // Start processing frames (throttled to ~10 FPS — sufficient for gestures)
+                // Process at ~5 FPS — plenty for gesture recognition, reduces Wasm collision with legacy modules
                 let lastProcessTime = 0;
-                const FRAME_INTERVAL_MS = 100; // process at most every 100ms
+                const FRAME_INTERVAL_MS = 200;
+                const MAX_CONSECUTIVE_ERRORS = 5;
+                const ERROR_BACKOFF_MS = 2000; // pause processing for 2s after repeated Wasm errors
 
                 const processFrame = () => {
                     if (cancelled) return;
 
                     const now = performance.now();
+
+                    // After consecutive errors, back off to let legacy Wasm modules settle
+                    if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_ERRORS) {
+                        if (now - lastProcessTime < ERROR_BACKOFF_MS) {
+                            rafRef.current = requestAnimationFrame(processFrame);
+                            return;
+                        }
+                        // Reset error count after backoff
+                        consecutiveErrorsRef.current = 0;
+                    }
+
                     if (now - lastProcessTime < FRAME_INTERVAL_MS) {
                         rafRef.current = requestAnimationFrame(processFrame);
                         return;
                     }
+
+                    // Prevent re-entrant Wasm calls
+                    if (isProcessingRef.current) {
+                        rafRef.current = requestAnimationFrame(processFrame);
+                        return;
+                    }
+
                     lastProcessTime = now;
 
                     const video = videoRef.current;
                     if (video && !video.paused && !video.ended && video.readyState >= 2 && recognizerRef.current) {
+                        // Use integer ms timestamp, guaranteed monotonic
+                        const ts = Math.round(now);
+                        if (ts <= lastTimestampRef.current) {
+                            // Timestamp collision — skip frame
+                            rafRef.current = requestAnimationFrame(processFrame);
+                            return;
+                        }
+
+                        isProcessingRef.current = true;
                         try {
-                            // Use integer ms timestamp, guaranteed monotonic at 10 FPS
-                            const ts = Math.round(now);
-                            if (ts <= lastTimestampRef.current) {
-                                // Still a collision somehow — skip this frame entirely
-                                rafRef.current = requestAnimationFrame(processFrame);
-                                return;
-                            }
                             lastTimestampRef.current = ts;
                             const result = recognizerRef.current.recognizeForVideo(video, ts);
+                            consecutiveErrorsRef.current = 0; // success — reset error count
 
                             const gestures: GestureResult[] = [];
                             let hasOpen = false;
@@ -162,7 +211,13 @@ export function useGestureRecognizer(
                                 isReady: true,
                             });
                         } catch (e) {
-                            // Frame processing error — skip silently
+                            // Wasm processing error — increment counter and skip
+                            consecutiveErrorsRef.current++;
+                            if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_ERRORS) {
+                                console.warn(`[GestureRecognizer] ${MAX_CONSECUTIVE_ERRORS} consecutive Wasm errors — backing off for ${ERROR_BACKOFF_MS}ms`);
+                            }
+                        } finally {
+                            isProcessingRef.current = false;
                         }
                     }
 
@@ -180,6 +235,7 @@ export function useGestureRecognizer(
 
         return () => {
             cancelled = true;
+            window.removeEventListener('error', suppressWasmError, true);
             if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
             try { recognizerRef.current?.close(); } catch (e) { /* ignore abort */ }
             recognizerRef.current = null;

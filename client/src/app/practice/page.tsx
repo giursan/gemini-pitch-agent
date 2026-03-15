@@ -80,7 +80,7 @@ export default function Home() {
   // Stagger GestureRecognizer by 3 seconds after session starts to prevent WASM load crash
   useEffect(() => {
     if (isActive) {
-      const t = setTimeout(() => setEnableGestures(true), 3000);
+      const t = setTimeout(() => setEnableGestures(true), 5000);
       return () => clearTimeout(t);
     } else {
       setEnableGestures(false);
@@ -392,8 +392,6 @@ export default function Home() {
         }
         const rms = Math.sqrt(sum / dataArray.length);
 
-        // Throttle debug logging to roughly once a second (4096 samples @ 16kHz ~4 times/sec)
-        // just to see if the mic is picking up non-zero data
         if (Math.random() < 0.25) {
           console.log(`[Audio Debug] Mic RMS amplitude: ${rms.toFixed(4)}`);
         }
@@ -530,7 +528,7 @@ export default function Home() {
                     <span className="text-[11px] font-bold tracking-wider text-neutral-700">LIVE FEEDBACK ACTIVE</span>
                   </div>
                   <div className="px-4 py-2 bg-google-blue/10 backdrop-blur-xl rounded-lg border border-neutral-200 flex items-center gap-2">
-                    <span className="text-[11px] font-bold tracking-wider text-google-blue">5 AGENTS MONITORING</span>
+                    <span className="text-[11px] font-bold tracking-wider text-google-blue">{Object.values(enabledAgents).filter(Boolean).length} AGENT{Object.values(enabledAgents).filter(Boolean).length !== 1 ? 'S' : ''} MONITORING</span>
                   </div>
                 </>
               )}
@@ -594,10 +592,10 @@ export default function Home() {
           {/* Quick Stats Below Video (hidden in fullscreen) */}
           {!isFullscreen && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <QuickMetric label="Posture Score" value={`${bodyMetrics.overallScore}%`} color="blue" />
-              <QuickMetric label="Gaze Contact" value={`${realTimeEyeContact}%`} color="green" />
-              <QuickMetric label="Pacing (WPM)" value={sessionMetrics.pacing || '--'} color="amber" />
-              <QuickMetric label="Filler Words" value={sessionMetrics.filler} color="red" />
+              {enabledAgents.posture && <QuickMetric label="Posture Score" value={`${bodyMetrics.overallScore}%`} color="blue" />}
+              {enabledAgents.eyeContact && <QuickMetric label="Gaze Contact" value={`${realTimeEyeContact}%`} color="green" />}
+              {enabledAgents.speech && <QuickMetric label="Pacing (WPM)" value={sessionMetrics.pacing || '--'} color="amber" />}
+              {enabledAgents.speech && <QuickMetric label="Filler Words" value={sessionMetrics.filler} color="red" />}
             </div>
           )}
 
@@ -610,95 +608,113 @@ export default function Home() {
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-                {/* Visual Performance Section */}
-                <section>
-                  <SectionHeader icon={<Eye className="w-5 h-5" />} title="Visual Presence" subtitle="Body & Facial Analysis" />
-                  <div className="space-y-4 pt-2">
-                    <MetricRow label="Eye Contact" value={`${realTimeEyeContact}%`} good={realTimeEyeContact > 70} />
-                    <MetricRow label="Posture" value={bodyMetrics.isGoodPosture ? 'Upright' : 'Slouching'} good={bodyMetrics.isGoodPosture} />
-                    <MetricRow label="Shoulder Symmetry" value={`${Math.round(bodyMetrics.shoulderSymmetry * 100)}%`} good={bodyMetrics.shoulderSymmetry > 0.8} />
-                    <MetricRow label="Stability" value={`${Math.round(bodyMetrics.bodyStability * 100)}%`} good={bodyMetrics.bodyStability > 0.7} />
-                    <MetricRow label="Smile Intensity" value={`${Math.round(bodyMetrics.smileScore * 100)}%`} good={bodyMetrics.smileScore > 0.3} />
-                    <MetricRow
-                      label="Active Gestures"
-                      value={gestureMetrics.currentGestures.length > 0
-                        ? gestureMetrics.currentGestures.map(g => g.gesture.replace('_', ' ')).slice(0, 1).join('')
-                        : '--'}
-                      good={true}
-                      color="text-google-purple"
-                    />
-                  </div>
-                </section>
-
-                {/* Verbal Performance Section */}
-                <section className="flex flex-col">
-                  <SectionHeader icon={<Mic className="w-5 h-5" />} title="Verbal Performance" subtitle="Voice & Content Analysis" />
-                  <div className="space-y-4 pt-2">
-                    <MetricRow label="Pacing" value={sessionMetrics.pacing > 0 ? `${sessionMetrics.pacing} WPM` : '--'} good={sessionMetrics.pacing > 120 && sessionMetrics.pacing < 160} />
-                    <MetricRow label="Filler Frequency" value={`${sessionMetrics.filler}/min`} good={sessionMetrics.filler < 5} />
-                    <MetricRow label="Delivery Grade" value={sessionMetrics.deliveryScore > 0 ? `${sessionMetrics.deliveryScore}/100` : '--'} good={sessionMetrics.deliveryScore >= 70} />
-                    <MetricRow label="Content Depth" value={sessionMetrics.contentScore > 0 ? `${sessionMetrics.contentScore}/100` : '--'} good={sessionMetrics.contentScore >= 70} />
-                  </div>
-
-                  {/* Overall Score Circle */}
-                  <div className="mt-auto pt-8 flex items-center justify-between border-t border-neutral-100">
-                    <div>
-                      <h4 className="text-sm font-bold text-neutral-900">Overall Rating</h4>
-                      <p className="text-[10px] uppercase text-neutral-400 font-bold mt-1 tracking-wider">Aura Session PR</p>
-                    </div>
-                    <div className="relative w-24 h-24 flex items-center justify-center">
-                      <svg className="w-full h-full transform -rotate-90">
-                        <circle cx="48" cy="48" r="42" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-neutral-100" />
-                        <circle
-                          cx="48" cy="48" r="42" stroke="currentColor" strokeWidth="6" fill="transparent"
-                          strokeDasharray={263.89}
-                          strokeDashoffset={263.89 - (263.89 * bodyMetrics.overallScore) / 100}
-                          className={`transition-all duration-1000 ${bodyMetrics.overallScore >= 70 ? 'text-google-green' : bodyMetrics.overallScore >= 40 ? 'text-google-blue' : 'text-google-red'}`}
+                {/* Visual Performance Section — shown when any visual agent is active */}
+                {(enabledAgents.eyeContact || enabledAgents.posture || enabledAgents.gestures) && (
+                  <section>
+                    <SectionHeader icon={<Eye className="w-5 h-5" />} title="Visual Presence" subtitle="Body & Facial Analysis" />
+                    <div className="space-y-4 pt-2">
+                      {enabledAgents.eyeContact && <MetricRow label="Eye Contact" value={`${realTimeEyeContact}%`} good={realTimeEyeContact > 70} />}
+                      {enabledAgents.posture && (
+                        <>
+                          <MetricRow label="Posture" value={bodyMetrics.isGoodPosture ? 'Upright' : 'Slouching'} good={bodyMetrics.isGoodPosture} />
+                          <MetricRow label="Shoulder Symmetry" value={`${Math.round(bodyMetrics.shoulderSymmetry * 100)}%`} good={bodyMetrics.shoulderSymmetry > 0.8} />
+                          <MetricRow label="Stability" value={`${Math.round(bodyMetrics.bodyStability * 100)}%`} good={bodyMetrics.bodyStability > 0.7} />
+                        </>
+                      )}
+                      {enabledAgents.eyeContact && <MetricRow label="Smile Intensity" value={`${Math.round(bodyMetrics.smileScore * 100)}%`} good={bodyMetrics.smileScore > 0.3} />}
+                      {enabledAgents.gestures && (
+                        <MetricRow
+                          label="Active Gestures"
+                          value={gestureMetrics.currentGestures.length > 0
+                            ? gestureMetrics.currentGestures.map(g => g.gesture.replace('_', ' ')).slice(0, 1).join('')
+                            : '--'}
+                          good={true}
+                          color="text-google-purple"
                         />
-                      </svg>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-2xl font-bold text-neutral-900">{bodyMetrics.overallScore}</span>
+                      )}
+                    </div>
+                  </section>
+                )}
+
+                {/* Verbal Performance Section — shown when speech agent is active */}
+                {enabledAgents.speech && (
+                  <section className="flex flex-col">
+                    <SectionHeader icon={<Mic className="w-5 h-5" />} title="Verbal Performance" subtitle="Voice & Content Analysis" />
+                    <div className="space-y-4 pt-2">
+                      <MetricRow label="Pacing" value={sessionMetrics.pacing > 0 ? `${sessionMetrics.pacing} WPM` : '--'} good={sessionMetrics.pacing > 120 && sessionMetrics.pacing < 160} />
+                      <MetricRow label="Filler Frequency" value={`${sessionMetrics.filler}/min`} good={sessionMetrics.filler < 5} />
+                      <MetricRow label="Delivery Grade" value={sessionMetrics.deliveryScore > 0 ? `${sessionMetrics.deliveryScore}/100` : '--'} good={sessionMetrics.deliveryScore >= 70} />
+                      <MetricRow label="Content Depth" value={sessionMetrics.contentScore > 0 ? `${sessionMetrics.contentScore}/100` : '--'} good={sessionMetrics.contentScore >= 70} />
+                    </div>
+
+                    {/* Overall Score Circle */}
+                    <div className="mt-auto pt-8 flex items-center justify-between border-t border-neutral-100">
+                      <div>
+                        <h4 className="text-sm font-bold text-neutral-900">Overall Rating</h4>
+                        <p className="text-[10px] uppercase text-neutral-400 font-bold mt-1 tracking-wider">Aura Session PR</p>
+                      </div>
+                      <div className="relative w-24 h-24 flex items-center justify-center">
+                        <svg className="w-full h-full transform -rotate-90">
+                          <circle cx="48" cy="48" r="42" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-neutral-100" />
+                          <circle
+                            cx="48" cy="48" r="42" stroke="currentColor" strokeWidth="6" fill="transparent"
+                            strokeDasharray={263.89}
+                            strokeDashoffset={263.89 - (263.89 * bodyMetrics.overallScore) / 100}
+                            className={`transition-all duration-1000 ${bodyMetrics.overallScore >= 70 ? 'text-google-green' : bodyMetrics.overallScore >= 40 ? 'text-google-blue' : 'text-google-red'}`}
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                          <span className="text-2xl font-bold text-neutral-900">{bodyMetrics.overallScore}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </section>
+                  </section>
+                )}
 
-                {/* TED Comparison Section */}
-                <section className="bg-neutral-50 px-6 py-6 border border-neutral-200 rounded-lg h-full">
-                  <SectionHeader icon={<TrendingUp className="w-5 h-5" />} title="Comparison" subtitle="vs. Empirical TED Benchmarks" />
-                  <div className="pt-4">
-                    {(() => {
-                      const profile = loadBenchmarkProfile();
-                      if (!profile) return (
-                        <a href="/profiler" className="block p-4 bg-white border border-amber-500/10 rounded-lg group transition-all hover:border-amber-500/30">
-                          <p className="text-[11px] font-bold text-amber-600 mb-1">UNAUTHENTICATED BASELINE</p>
-                          <p className="text-xs text-neutral-500 leading-relaxed group-hover:text-neutral-700 transition-colors">
-                            Scan TED talks in the Profiler to unlock advanced percentile rankings.
-                          </p>
-                        </a>
-                      );
-                      const scores = scoreSession(bodyMetrics, profile);
-                      return (
-                        <div className="space-y-6">
-                          {Object.entries(scores).filter(([k]) => ['eyeContact', 'postureAngle', 'gesturesPerMin', 'overallScore'].includes(k)).map(([key, result]) => (
-                            <div key={key} className="space-y-2.5">
-                              <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-neutral-500">
-                                <span className="text-neutral-700">{key.replace(/([A-Z])/g, ' $1')}</span>
-                                <span className={result.percentile >= 70 ? 'text-google-green' : 'text-google-blue'}>P{result.percentile}</span>
+                {/* TED Comparison Section — shown when any visual agent is active */}
+                {(enabledAgents.eyeContact || enabledAgents.posture || enabledAgents.gestures) && (
+                  <section className="bg-neutral-50 px-6 py-6 border border-neutral-200 rounded-lg h-full">
+                    <SectionHeader icon={<TrendingUp className="w-5 h-5" />} title="Comparison" subtitle="vs. Empirical TED Benchmarks" />
+                    <div className="pt-4">
+                      {(() => {
+                        const profile = loadBenchmarkProfile();
+                        if (!profile) return (
+                          <a href="/profiler" className="block p-4 bg-white border border-amber-500/10 rounded-lg group transition-all hover:border-amber-500/30">
+                            <p className="text-[11px] font-bold text-amber-600 mb-1">UNAUTHENTICATED BASELINE</p>
+                            <p className="text-xs text-neutral-500 leading-relaxed group-hover:text-neutral-700 transition-colors">
+                              Scan TED talks in the Profiler to unlock advanced percentile rankings.
+                            </p>
+                          </a>
+                        );
+                        const scores = scoreSession(bodyMetrics, profile);
+                        const visibleKeys = [
+                          ...(enabledAgents.eyeContact ? ['eyeContact'] : []),
+                          ...(enabledAgents.posture ? ['postureAngle'] : []),
+                          ...(enabledAgents.gestures ? ['gesturesPerMin'] : []),
+                          'overallScore',
+                        ];
+                        return (
+                          <div className="space-y-6">
+                            {Object.entries(scores).filter(([k]) => visibleKeys.includes(k)).map(([key, result]) => (
+                              <div key={key} className="space-y-2.5">
+                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                                  <span className="text-neutral-700">{key.replace(/([A-Z])/g, ' $1')}</span>
+                                  <span className={result.percentile >= 70 ? 'text-google-green' : 'text-google-blue'}>P{result.percentile}</span>
+                                </div>
+                                <div className="h-2 w-full bg-neutral-200 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-1000 ${result.percentile >= 70 ? 'bg-google-green' : 'bg-google-blue'}`}
+                                    style={{ width: `${result.percentile}%` }}
+                                  />
+                                </div>
                               </div>
-                              <div className="h-2 w-full bg-neutral-200 rounded-full overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full transition-all duration-1000 ${result.percentile >= 70 ? 'bg-google-green' : 'bg-google-blue'}`}
-                                  style={{ width: `${result.percentile}%` }}
-                                />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </section>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </section>
+                )}
               </div>
             </div>
           )}

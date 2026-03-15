@@ -62,32 +62,28 @@ export function useEyeContact(
             return;
         }
 
-        if (features.eyeContact) {
-            faceMeshRef.current = new FaceMeshConstructor({
-                locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-            });
+        // Always initialize both models
+        faceMeshRef.current = new FaceMeshConstructor({
+            locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
 
-            faceMeshRef.current!.setOptions({
-                maxNumFaces: 1,
-                refineLandmarks: true,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
-            });
-        }
+        faceMeshRef.current!.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
 
-        let currentPose: any = null;
-        if (features.posture) {
-            const poseObj = new PoseConstructor({
-                locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-            });
-            poseObj.setOptions({
-                modelComplexity: 1,
-                smoothLandmarks: true,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
-            });
-            currentPose = poseObj;
-        }
+        const poseObj = new PoseConstructor({
+            locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        poseObj.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        const currentPose = poseObj;
 
         let activeCanvasCtx: CanvasRenderingContext2D | null = null;
 
@@ -205,7 +201,7 @@ export function useEyeContact(
             if (activeCanvasCtx && results.poseLandmarks) {
                 drawConnectors(activeCanvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
                 drawLandmarks(activeCanvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
-                activeCanvasCtx.restore(); // Frame finished drawing
+                activeCanvasCtx.restore();
             } else if (activeCanvasCtx) {
                 activeCanvasCtx.restore();
             }
@@ -260,7 +256,7 @@ export function useEyeContact(
             try { currentPose?.close(); } catch (e) { /* ignore Wasm collision abort */ }
         };
 
-    }, [videoRef, canvasRef, videoMode, features.eyeContact, features.posture]);
+    }, [videoRef, canvasRef, videoMode]);
 
     return { eyeContactScore, landmarksRef };
 }
