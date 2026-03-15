@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type * as cam from '@mediapipe/camera_utils';
 import type { FaceMesh as FaceMeshType, Results } from '@mediapipe/face_mesh';
+import type { HandResult } from './useGestureRecognizer';
 
 /** Raw landmarks exposed each frame for downstream analysis hooks */
 export interface BodyLandmarks {
@@ -17,7 +18,9 @@ export function useEyeContact(
     canvasRef?: React.RefObject<HTMLCanvasElement | null>,
     /** When true, processes a <video> element playing a file instead of starting a webcam */
     videoMode: boolean = false,
-    features: { eyeContact: boolean; posture: boolean } = { eyeContact: true, posture: true }
+    features: { eyeContact: boolean; posture: boolean } = { eyeContact: true, posture: true },
+    /** Optional ref to hand landmark results from useGestureRecognizer, drawn in the pose pass */
+    handResultsRef?: React.RefObject<HandResult[]>,
 ) {
     const [eyeContactScore, setEyeContactScore] = useState<number>(100);
     const faceMeshRef = useRef<FaceMeshType | null>(null);
@@ -199,10 +202,88 @@ export function useEyeContact(
             }
 
             if (activeCanvasCtx && results.poseLandmarks) {
-                drawConnectors(activeCanvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
-                drawLandmarks(activeCanvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
-                activeCanvasCtx.restore();
-            } else if (activeCanvasCtx) {
+                const hasHandResults = handResultsRef?.current && handResultsRef.current.length > 0;
+
+                if (hasHandResults) {
+                    // Filter out hand/wrist landmarks (15-22) since GestureRecognizer provides detailed hand tracking
+                    const HAND_INDICES = new Set([15, 16, 17, 18, 19, 20, 21, 22]);
+                    const filteredLandmarks = results.poseLandmarks.map((lm: any, i: number) =>
+                        HAND_INDICES.has(i) ? { ...lm, visibility: 0 } : lm
+                    );
+                    const filteredConnections = POSE_CONNECTIONS.filter(
+                        ([a, b]: [number, number]) => !HAND_INDICES.has(a) && !HAND_INDICES.has(b)
+                    );
+                    drawConnectors(activeCanvasCtx, filteredLandmarks, filteredConnections, { color: '#00FF00', lineWidth: 4 });
+                    drawLandmarks(activeCanvasCtx, filteredLandmarks.filter((_: any, i: number) => !HAND_INDICES.has(i)), { color: '#FF0000', lineWidth: 2 });
+                } else {
+                    drawConnectors(activeCanvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+                    drawLandmarks(activeCanvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+                }
+            }
+
+            // ── Draw hand skeletons from GestureRecognizer (synchronized) ──
+            if (activeCanvasCtx && handResultsRef?.current && handResultsRef.current.length > 0 && canvasRef?.current) {
+                const w = canvasRef.current.width;
+                const h = canvasRef.current.height;
+                const HAND_CONNECTIONS: [number, number][] = [
+                    [0, 1], [1, 2], [2, 3], [3, 4],
+                    [0, 5], [5, 6], [6, 7], [7, 8],
+                    [0, 9], [9, 10], [10, 11], [11, 12],
+                    [0, 13], [13, 14], [14, 15], [15, 16],
+                    [0, 17], [17, 18], [18, 19], [19, 20],
+                    [5, 9], [9, 13], [13, 17],
+                ];
+                for (const hand of handResultsRef.current) {
+                    if (!hand.landmarks || hand.landmarks.length < 21) continue;
+                    const isCyan = hand.handedness === 'Left';
+                    const lineColor = isCyan ? 'rgba(0, 255, 255, 0.8)' : 'rgba(255, 0, 255, 0.8)';
+                    const dotColor = isCyan ? 'rgba(0, 255, 255, 1)' : 'rgba(255, 0, 255, 1)';
+
+                    // Draw connections
+                    activeCanvasCtx.strokeStyle = lineColor;
+                    activeCanvasCtx.lineWidth = 3;
+                    for (const [a, b] of HAND_CONNECTIONS) {
+                        const la = hand.landmarks[a];
+                        const lb = hand.landmarks[b];
+                        activeCanvasCtx.beginPath();
+                        activeCanvasCtx.moveTo(la.x * w, la.y * h);
+                        activeCanvasCtx.lineTo(lb.x * w, lb.y * h);
+                        activeCanvasCtx.stroke();
+                    }
+
+                    // Draw landmark dots
+                    activeCanvasCtx.fillStyle = dotColor;
+                    for (const lm of hand.landmarks) {
+                        activeCanvasCtx.beginPath();
+                        activeCanvasCtx.arc(lm.x * w, lm.y * h, 4, 0, 2 * Math.PI);
+                        activeCanvasCtx.fill();
+                    }
+
+                    // Brighter fingertip dots
+                    activeCanvasCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                    for (const idx of [4, 8, 12, 16, 20]) {
+                        const lm = hand.landmarks[idx];
+                        activeCanvasCtx.beginPath();
+                        activeCanvasCtx.arc(lm.x * w, lm.y * h, 6, 0, 2 * Math.PI);
+                        activeCanvasCtx.fill();
+                    }
+
+                    // Connect hand wrist to pose elbow (bridge the two skeletons)
+                    const elbowIdx = hand.handedness === 'Left' ? 13 : 14;
+                    const elbow = results.poseLandmarks?.[elbowIdx];
+                    if (elbow && elbow.visibility > 0.5) {
+                        const wrist = hand.landmarks[0];
+                        activeCanvasCtx.strokeStyle = lineColor;
+                        activeCanvasCtx.lineWidth = 3;
+                        activeCanvasCtx.beginPath();
+                        activeCanvasCtx.moveTo(elbow.x * w, elbow.y * h);
+                        activeCanvasCtx.lineTo(wrist.x * w, wrist.y * h);
+                        activeCanvasCtx.stroke();
+                    }
+                }
+            }
+
+            if (activeCanvasCtx) {
                 activeCanvasCtx.restore();
             }
         }
@@ -256,7 +337,7 @@ export function useEyeContact(
             try { currentPose?.close(); } catch (e) { /* ignore Wasm collision abort */ }
         };
 
-    }, [videoRef, canvasRef, videoMode]);
+    }, [videoRef, canvasRef, videoMode, handResultsRef]);
 
     return { eyeContactScore, landmarksRef };
 }

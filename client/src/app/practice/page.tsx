@@ -63,14 +63,16 @@ export default function Home() {
 
   const isActive = sessionState === 'recording' || sessionState === 'paused';
 
-  // CV Hooks (run while session is active)
-  const { eyeContactScore: realTimeEyeContact, landmarksRef } = useEyeContact(
-    webcamRef as any || { current: null }, overlayCanvasRef, false, enabledAgents
-  );
-  const { metrics: bodyMetrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, isActive);
-
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // CV Hooks (run while session is active)
+  // Note: handResultsRef from gesture hook is passed to eye contact hook for synchronized drawing
+  const { metrics: gestureMetrics, handResultsRef: gestureHandResultsRef } = useGestureRecognizer(videoElementRef, enableGestures && enabledAgents.gestures);
+  const { eyeContactScore: realTimeEyeContact, landmarksRef } = useEyeContact(
+    webcamRef as any || { current: null }, overlayCanvasRef, false, enabledAgents, gestureHandResultsRef
+  );
+  const { metrics: bodyMetrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, isActive);
 
   useEffect(() => {
     const video = (webcamRef.current as any)?.video || null;
@@ -87,7 +89,7 @@ export default function Home() {
     }
   }, [isActive]);
 
-  const gestureMetrics = useGestureRecognizer(videoElementRef, enableGestures && enabledAgents.gestures);
+
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -425,8 +427,9 @@ export default function Home() {
           handVisibility: bodyMetrics.handVisibility,
           smileScore: bodyMetrics.smileScore,
           overallScore: bodyMetrics.overallScore,
-          currentGestures: gestureMetrics.currentGestures.map(g => g.gesture),
-          openGestureRatio: gestureMetrics.openGestureRatio,
+          currentGestures: gestureMetrics?.currentGestures?.map(g => g.gesture) || [],
+          openGestureRatio: gestureMetrics?.openGestureRatio ?? 0,
+          handsDetected: gestureMetrics?.handsDetected ?? 0,
         },
       }));
     }, 1000);
@@ -623,14 +626,22 @@ export default function Home() {
                       )}
                       {enabledAgents.eyeContact && <MetricRow label="Smile Intensity" value={`${Math.round(bodyMetrics.smileScore * 100)}%`} good={bodyMetrics.smileScore > 0.3} />}
                       {enabledAgents.gestures && (
-                        <MetricRow
-                          label="Active Gestures"
-                          value={gestureMetrics.currentGestures.length > 0
-                            ? gestureMetrics.currentGestures.map(g => g.gesture.replace('_', ' ')).slice(0, 1).join('')
-                            : '--'}
-                          good={true}
-                          color="text-google-purple"
-                        />
+                        <>
+                          <MetricRow
+                            label="Active Gestures"
+                            value={gestureMetrics?.currentGestures?.length > 0
+                              ? gestureMetrics.currentGestures.map(g => g.gesture.replace('_', ' ')).join(', ')
+                              : '--'}
+                            good={true}
+                            color="text-google-purple"
+                          />
+                          <MetricRow
+                            label="Hands Detected"
+                            value={`${gestureMetrics?.handsDetected ?? 0}`}
+                            good={(gestureMetrics?.handsDetected ?? 0) > 0}
+                            color="text-google-purple"
+                          />
+                        </>
                       )}
                     </div>
                   </section>
