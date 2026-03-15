@@ -9,11 +9,11 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@google/adk": "^0.2.0",
+    "@google/adk": "^0.1.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "firebase-admin": "^13.7.0",
+    "firebase-admin": "^10.3.0",
     "node-fetch": "^3.3.2",
     "ws": "^8.18.0",
     "zod": "^3.24.0"
