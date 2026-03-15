@@ -140,8 +140,7 @@ export default function PostureCalibrationOverlay({
                 <div className="w-16 h-16 rounded-2xl bg-google-blue/20 flex items-center justify-center mb-4">
                     <UserCheck className="w-8 h-8 text-google-blue" />
                 </div>
-                <h2 className="text-3xl font-bold text-white tracking-tight">Postural Stance Calibration</h2>
-                <p className="text-neutral-400 mt-2 font-medium">Calibrating your baseline to detect rounding and slumping.</p>
+                <h2 className="text-4xl font-bold text-white tracking-tight">Postural Stance Calibration</h2>
             </div>
 
             {/* Main Guidance UI */}
@@ -155,30 +154,24 @@ export default function PostureCalibrationOverlay({
                             ) : (
                                 <Ruler className="w-20 h-20 text-neutral-600 mx-auto mb-6 animate-pulse" />
                             )}
-                            <h3 className="text-2xl font-bold text-white mb-3">
+                            <h3 className="text-4xl font-bold text-white mb-6">
                                 {isVisible ? "Position Perfect" : "Full Body Check"}
                             </h3>
-                            <p className="text-neutral-400 text-lg leading-relaxed">
+                            <p className="text-neutral-300 text-3xl font-medium leading-relaxed">
                                 {isVisible
                                     ? "We can see your entire upper body. Now, confirm with a 👍 gesture to continue."
                                     : "Please step back until your hips and the top of your head are visible in the frame."}
                             </p>
                         </div>
-                        {!isVisible && (
-                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 flex items-center gap-3 text-amber-500 max-w-md mx-auto">
-                                <AlertCircle className="w-5 h-5 shrink-0" />
-                                <p className="text-sm font-bold text-left uppercase tracking-tight">Camera placement: ensure you have enough floor space.</p>
-                            </div>
-                        )}
                     </div>
                 )}
 
                 {step === 'UPRIGHT_INSTRUCTIONS' && (
                     <div className="space-y-8 animate-in zoom-in-95 duration-500">
-                        <div className="p-8 rounded-3xl bg-google-blue/10 border-2 border-google-blue/30 max-w-lg mx-auto">
-                            <ShieldCheck className="w-20 h-20 text-google-blue mx-auto mb-6" />
-                            <h3 className="text-2xl font-bold text-white mb-3">Set Your Best Stance</h3>
-                            <p className="text-neutral-400 text-lg leading-relaxed">
+                        <div className="p-10 rounded-3xl bg-google-blue/10 border-2 border-google-blue/30 max-w-3xl mx-auto">
+                            <ShieldCheck className="w-24 h-24 text-google-blue mx-auto mb-8" />
+                            <h3 className="text-4xl font-bold text-white mb-6">Set Your Best Stance</h3>
+                            <p className="text-neutral-300 text-3xl font-medium leading-relaxed">
                                 Stand as tall as possible. Pull your shoulders back and lift your chin slightly.
                                 <br /><br />
                                 Give a 👍 when you are ready to snapshot this baseline.
@@ -188,12 +181,12 @@ export default function PostureCalibrationOverlay({
                 )}
 
                 {step === 'COUNTDOWN' && (
-                    <div className="relative">
-                        <div className="w-48 h-48 rounded-full border-8 border-white/5 flex items-center justify-center">
-                            <div className="w-40 h-40 rounded-full border-8 border-google-blue border-t-transparent animate-spin absolute" style={{ animationDuration: '5s' }} />
-                            <span className="text-8xl font-black text-white tabular-nums animate-pulse">{countdown}</span>
+                    <div className="relative flex flex-col items-center">
+                        <div className="w-64 h-64 rounded-full border-[12px] border-white/5 flex items-center justify-center relative">
+                            <div className="inset-0 rounded-full border-[12px] border-google-blue border-t-transparent animate-spin absolute" style={{ animationDuration: '5s' }} />
+                            <span className="text-[10rem] font-black text-white tabular-nums animate-pulse absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">{countdown}</span>
                         </div>
-                        <p className="text-white font-bold text-xl mt-8 tracking-widest uppercase">Hold Position</p>
+                        <p className="text-white font-black text-4xl mt-12 tracking-widest uppercase">Hold Position</p>
                     </div>
                 )}
 
@@ -205,12 +198,12 @@ export default function PostureCalibrationOverlay({
                 )}
 
                 {step === 'SUCCESS' && (
-                    <div className="space-y-6 animate-in zoom-in-95">
-                        <div className="w-24 h-24 bg-google-green rounded-full flex items-center justify-center mx-auto shadow-2xl shadow-google-green/40">
-                            <CheckCircle2 className="w-12 h-12 text-white" />
+                    <div className="space-y-8 animate-in zoom-in-95">
+                        <div className="w-32 h-32 bg-google-green rounded-full flex items-center justify-center mx-auto shadow-2xl shadow-google-green/40">
+                            <CheckCircle2 className="w-16 h-16 text-white" />
                         </div>
-                        <h3 className="text-4xl font-bold text-white">Baseline Captured</h3>
-                        <p className="text-google-green font-bold tracking-widest uppercase">Calibration Success</p>
+                        <h3 className="text-6xl font-black text-white">Baseline Captured</h3>
+                        <p className="text-google-green font-black text-2xl tracking-widest uppercase">Calibration Success</p>
                     </div>
                 )}
             </div>
@@ -219,7 +212,7 @@ export default function PostureCalibrationOverlay({
             <div className="absolute bottom-12">
                 <button
                     onClick={onCancel}
-                    className="px-6 py-3 rounded-xl border border-white/10 text-neutral-500 hover:text-white hover:bg-white/5 transition-all text-sm font-bold uppercase tracking-widest"
+                    className="px-6 py-3 rounded-xl border border-red-500/10 text-red-500 hover:text-red-500 hover:bg-red-500/5 transition-all text-sm font-bold uppercase tracking-widest"
                 >
                     Cancel Calibration
                 </button>
