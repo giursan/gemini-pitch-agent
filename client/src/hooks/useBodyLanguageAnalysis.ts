@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { BodyLandmarks } from './useEyeContact';
 
 // ─── MediaPipe Pose Landmark IDs ───────────────────────────────────────────────
-const LM = {
+export const LM = {
     LEFT_EAR: 7,
     RIGHT_EAR: 8,
     LEFT_SHOULDER: 11,
@@ -42,12 +42,27 @@ export const TED_BENCHMARKS = {
 };
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
+export interface PostureBaseline {
+    neckRatio: number;      // Chin→Shoulder / Shoulder→Hip
+    breadthRatio: number;   // ShoulderWidth / Shoulder→Hip
+    idealAngle: number;
+}
+
 export interface BodyLanguageMetrics {
     // Posture
     postureAngle: number;       // Current ear→shoulder→hip angle (degrees)
     isGoodPosture: boolean;     // >slouchAngle threshold
     shoulderSymmetry: number;   // 0–1 (1 = perfectly level)
     bodyStability: number;      // 0–1 (1 = perfectly still)
+
+    // Shrimp Indicators (0-1, where 1 is perfect/baseline)
+    neckStability: number;      // Current neck ratio relative to baseline
+    shoulderExpansion: number;  // Current breadth ratio relative to baseline
+
+    // Raw live values
+    currentNeckRatio: number;      // Raw live Chin→Shoulder / Shoulder→Hip
+    currentBreadthRatio: number;   // Raw live ShoulderWidth / Shoulder→Hip
+
 
     // Gestures
     gesturesPerMin: number;     // Estimated from wrist velocity spikes in sliding window
@@ -66,6 +81,10 @@ const DEFAULT_METRICS: BodyLanguageMetrics = {
     isGoodPosture: true,
     shoulderSymmetry: 1,
     bodyStability: 1,
+    neckStability: 1,
+    shoulderExpansion: 1,
+    currentNeckRatio: 0,
+    currentBreadthRatio: 0,
     gesturesPerMin: 0,
     handVisibility: 1,
     smileScore: 0,
@@ -74,7 +93,7 @@ const DEFAULT_METRICS: BodyLanguageMetrics = {
 };
 
 // ─── Utility: angle between 3 points (in degrees) ─────────────────────────────
-function angleBetween(
+export function angleBetween(
     a: { x: number; y: number },
     b: { x: number; y: number },
     c: { x: number; y: number }
@@ -113,6 +132,7 @@ interface FrameSample {
 export function useBodyLanguageAnalysis(
     landmarksRef: React.RefObject<BodyLandmarks>,
     enabled: boolean = true,
+    baseline: PostureBaseline | null = null
 ) {
     const [metrics, setMetrics] = useState<BodyLanguageMetrics>(DEFAULT_METRICS);
     const samplesRef = useRef<FrameSample[]>([]);
@@ -162,6 +182,23 @@ export function useBodyLanguageAnalysis(
                 const shoulderYDiff = Math.abs(pose[LM.LEFT_SHOULDER].y - pose[LM.RIGHT_SHOULDER].y);
                 const shoulderWidth = Math.abs(pose[LM.LEFT_SHOULDER].x - pose[LM.RIGHT_SHOULDER].x);
                 shoulderSymmetry = Math.max(0, 1 - (shoulderYDiff / Math.max(shoulderWidth, 0.01)) * 2);
+
+                // ── Shrimp Proxies ───────────────────────────────────────
+                let neckStability = 1;
+                let shoulderExpansion = 1;
+
+                const trunkHeightCalc = dist(shoulderMid, hipMidCalc);
+                const currentShoulderWidth = dist(pose[LM.LEFT_SHOULDER], pose[LM.RIGHT_SHOULDER]);
+                const currentBreadthRatio = currentShoulderWidth / Math.max(trunkHeightCalc, 0.01);
+
+                if (baseline) {
+                    shoulderExpansion = Math.min(1.2, currentBreadthRatio / baseline.breadthRatio);
+                }
+
+                setMetrics(prev => ({
+                    ...prev,
+                    currentBreadthRatio,
+                }));
 
                 // ── Gesture detection (wrist velocity spikes) ──────────────
                 const leftWrist = { x: pose[LM.LEFT_WRIST].x, y: pose[LM.LEFT_WRIST].y };
@@ -216,6 +253,26 @@ export function useBodyLanguageAnalysis(
                 const leftBrow = face[FM.LEFT_EYEBROW_UPPER];
                 const rightBrow = face[FM.RIGHT_EYEBROW_UPPER];
                 const browHeight = ((noseTip.y - leftBrow.y) + (noseTip.y - rightBrow.y)) / 2;
+
+                // Neck ratio: Chin→Shoulder / Shoulder→Hip
+                if (pose && pose.length >= 25) {
+                    const shoulderMid = {
+                        x: (pose[LM.LEFT_SHOULDER].x + pose[LM.RIGHT_SHOULDER].x) / 2,
+                        y: (pose[LM.LEFT_SHOULDER].y + pose[LM.RIGHT_SHOULDER].y) / 2,
+                    };
+                    const hipMid = {
+                        x: (pose[LM.LEFT_HIP].x + pose[LM.RIGHT_HIP].x) / 2,
+                        y: (pose[LM.LEFT_HIP].y + pose[LM.RIGHT_HIP].y) / 2,
+                    };
+                    const trunkHeight = dist(shoulderMid, hipMid);
+                    const neckLen = dist(chin, shoulderMid);
+                    const currentNeckRatio = neckLen / Math.max(trunkHeight, 0.01);
+                    setMetrics(prev => ({
+                        ...prev,
+                        currentNeckRatio,
+                        neckStability: baseline ? Math.min(1.2, currentNeckRatio / baseline.neckRatio) : 1
+                    }));
+                }
 
                 // Update last sample with face data
                 if (samplesRef.current.length > 0) {
@@ -276,7 +333,8 @@ export function useBodyLanguageAnalysis(
                 ? handVisibleCountRef.current / totalFrameCountRef.current
                 : 1;
 
-            const isGoodPosture = postureAngle > TED_BENCHMARKS.slouchAngle;
+            const targetAngle = baseline ? Math.max(baseline.idealAngle - 15, TED_BENCHMARKS.slouchAngle - 10) : TED_BENCHMARKS.slouchAngle;
+            const isGoodPosture = postureAngle > targetAngle;
 
             // ── Composite score (0–100) ────────────────────────────────────
             const postureScore = Math.min(1, postureAngle / TED_BENCHMARKS.idealPostureAngle);
@@ -293,7 +351,8 @@ export function useBodyLanguageAnalysis(
                     expressiveness * 10)
             );
 
-            setMetrics({
+            setMetrics(prev => ({
+                ...prev,
                 postureAngle: Math.round(postureAngle),
                 isGoodPosture,
                 shoulderSymmetry: Math.round(shoulderSymmetry * 100) / 100,
@@ -303,7 +362,7 @@ export function useBodyLanguageAnalysis(
                 smileScore: Math.round(smileScore * 100) / 100,
                 expressiveness: Math.round(expressiveness * 100) / 100,
                 overallScore: Math.min(100, Math.max(0, overallScore)),
-            });
+            }));
         }, 100); // Sample at 10Hz (every 100ms)
 
         return () => clearInterval(interval);

@@ -4,14 +4,15 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import { Eye, Mic, TrendingUp, Pause, Hand, Maximize, Minimize, ActivitySquare, Terminal, Send, MessageSquare, Play, Square } from 'lucide-react';
 import { useEyeContact } from '../../hooks/useEyeContact';
-import { useBodyLanguageAnalysis, TED_BENCHMARKS } from '../../hooks/useBodyLanguageAnalysis';
+import { useBodyLanguageAnalysis, TED_BENCHMARKS, type PostureBaseline } from '../../hooks/useBodyLanguageAnalysis';
 import { useGestureRecognizer } from '../../hooks/useGestureRecognizer';
 import { loadBenchmarkProfile, scoreSession } from '../../hooks/useTEDBenchmarks';
 import SessionControls, { type SessionState, type FeedbackMode, type AgentSelection } from '../SessionControls';
 import FeedbackOverlay, { type Alert } from '../FeedbackOverlay';
 import ReportView from '../ReportView';
 import { useSearchParams } from 'next/navigation';
-import { Folder } from 'lucide-react';
+import { Folder, UserCheck } from 'lucide-react';
+import PostureCalibrationOverlay from '../PostureCalibrationOverlay';
 
 // ── Audio Util ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,8 @@ export default function Home() {
   const [feed, setFeed] = useState<{ timestamp: number, source: string, message: string }[]>([]);
   const [showFeed, setShowFeed] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [posturalBaseline, setPosturalBaseline] = useState<PostureBaseline | null>(null);
 
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'gemini', text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -125,6 +128,22 @@ export default function Home() {
 
 
   useEffect(() => {
+    // Only run on client after mount
+    try {
+      const saved = localStorage.getItem('posturalBaseline');
+      if (saved) {
+        setPosturalBaseline(JSON.parse(saved));
+      }
+    } catch (e) { }
+  }, []);
+
+  useEffect(() => {
+    if (posturalBaseline) {
+      localStorage.setItem('posturalBaseline', JSON.stringify(posturalBaseline));
+    }
+  }, [posturalBaseline]);
+
+  useEffect(() => {
     // Ensure the video element is mounted before starting MediaPipe
     const checkVideo = setInterval(() => {
       const video = (webcamRef.current as any)?.video || null;
@@ -140,15 +159,17 @@ export default function Home() {
   // CV Hooks (run while session is active)
   const { metrics: gestureMetrics, handResultsRef: gestureHandResultsRef } = useGestureRecognizer(videoElementRef, enableGestures && enabledAgents.gestures && isVideoReady);
   const { eyeContactScore: realTimeEyeContact, landmarksRef } = useEyeContact(
-    isVideoReady ? videoElementRef : { current: null }, overlayCanvasRef, false, enabledAgents, gestureHandResultsRef
+    isVideoReady ? videoElementRef : { current: null }, overlayCanvasRef, false, enabledAgents, gestureHandResultsRef, posturalBaseline
   );
-  const { metrics: bodyMetrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, isActive);
+  const { metrics: bodyMetrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, isActive || isCalibrating, posturalBaseline);
 
   // Update ref every render (after hooks so variables are defined)
   latestTelemetryRef.current = {
     eyeContact: realTimeEyeContact,
     postureAngle: bodyMetrics?.postureAngle || 0,
     isGoodPosture: bodyMetrics?.isGoodPosture || false,
+    neckStability: bodyMetrics?.neckStability ?? 1,
+    shoulderExpansion: bodyMetrics?.shoulderExpansion ?? 1,
     gesturesPerMin: bodyMetrics?.gesturesPerMin || 0,
     handVisibility: bodyMetrics?.handVisibility || 0,
     smileScore: bodyMetrics?.smileScore || 0,
@@ -160,13 +181,13 @@ export default function Home() {
 
   // Stagger GestureRecognizer by 3 seconds after session starts to prevent WASM load crash
   useEffect(() => {
-    if (isActive) {
-      const t = setTimeout(() => setEnableGestures(true), 5000);
+    if (isActive || isCalibrating) {
+      const t = setTimeout(() => setEnableGestures(true), isCalibrating ? 1000 : 5000);
       return () => clearTimeout(t);
     } else {
       setEnableGestures(false);
     }
-  }, [isActive]);
+  }, [isActive, isCalibrating]);
 
 
 
@@ -584,6 +605,18 @@ export default function Home() {
           )}
         </div>
         <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 mr-4">
+            <button
+              onClick={() => {
+                setIsCalibrating(true);
+                setIsFullscreen(true);
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${posturalBaseline ? 'bg-google-green/10 text-google-green border border-google-green/20' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'}`}
+            >
+              <UserCheck className="w-4 h-4" />
+              {posturalBaseline ? 'RE-CALIBRATE' : 'CALIBRATE POSTURE'}
+            </button>
+          </div>
           <SessionControls
             state={sessionState}
             onStart={handleStart}
@@ -612,12 +645,14 @@ export default function Home() {
             />
 
             {/* Fullscreen Toggle Button */}
-            <button
-              onClick={toggleFullscreen}
-              className="absolute bottom-4 right-4 z-40 p-2 bg-black/50 hover:bg-black/70 rounded text-white backdrop-blur-md transition-colors opacity-0 group-hover:opacity-100"
-            >
-              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-            </button>
+            {!isCalibrating && (
+              <button
+                onClick={toggleFullscreen}
+                className="absolute bottom-4 right-4 z-40 p-2 bg-black/50 hover:bg-black/70 rounded text-white backdrop-blur-md transition-colors opacity-0 group-hover:opacity-100"
+              >
+                {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+              </button>
+            )}
 
             {/* Floating Fullscreen Controls */}
             {isFullscreen && isActive && (
@@ -728,7 +763,7 @@ export default function Home() {
           {/* Quick Stats Below Video (hidden in fullscreen) */}
           {!isFullscreen && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {enabledAgents.posture && <QuickMetric label="Posture Score" value={`${bodyMetrics.overallScore}%`} color="blue" />}
+              {enabledAgents.posture && <QuickMetric label="Posture Angle" value={`${bodyMetrics.postureAngle}°`} color="blue" />}
               {enabledAgents.eyeContact && <QuickMetric label="Gaze Contact" value={`${realTimeEyeContact}%`} color="green" />}
               {enabledAgents.speech && <QuickMetric label="Pacing (WPM)" value={sessionMetrics.pacing || '--'} color="amber" />}
               {enabledAgents.speech && <QuickMetric label="Filler Rate" value={`${sessionMetrics.filler}/min`} color="red" />}
@@ -753,12 +788,27 @@ export default function Home() {
                       {enabledAgents.eyeContact && <MetricRow label="Eye Contact" value={`${realTimeEyeContact}%`} good={realTimeEyeContact > 70} />}
                       {enabledAgents.posture && (
                         <>
-                          <MetricRow label="Posture" value={bodyMetrics.isGoodPosture ? 'Upright' : 'Slouching'} good={bodyMetrics.isGoodPosture} />
+                          <MetricRow label="Posture Status" value={bodyMetrics.isGoodPosture ? 'Upright' : 'Slouching'} good={bodyMetrics.isGoodPosture} />
+                          <MetricRow label="Posture Angle" value={`${bodyMetrics.postureAngle}°`} good={bodyMetrics.isGoodPosture} />
                           <MetricRow label="Shoulder Symmetry" value={`${Math.round(bodyMetrics.shoulderSymmetry * 100)}%`} good={bodyMetrics.shoulderSymmetry > 0.8} />
                           <MetricRow label="Stability" value={`${Math.round(bodyMetrics.bodyStability * 100)}%`} good={bodyMetrics.bodyStability > 0.7} />
                         </>
                       )}
                       {enabledAgents.eyeContact && <MetricRow label="Smile Intensity" value={`${Math.round(bodyMetrics.smileScore * 100)}%`} good={bodyMetrics.smileScore > 0.3} />}
+                      {posturalBaseline && enabledAgents.posture && (
+                        <>
+                          <MetricRow
+                            label="Neck Posture (Live / Calibrated)"
+                            value={`${bodyMetrics.currentNeckRatio.toFixed(2)} / ${posturalBaseline.neckRatio.toFixed(2)}`}
+                            good={bodyMetrics.neckStability > 0.98}
+                          />
+                          <MetricRow
+                            label="Shoulder Sweep (Live / Calibrated)"
+                            value={`${bodyMetrics.currentBreadthRatio.toFixed(2)} / ${posturalBaseline.breadthRatio.toFixed(2)}`}
+                            good={bodyMetrics.shoulderExpansion > 0.9}
+                          />
+                        </>
+                      )}
                       {enabledAgents.gestures && (
                         <>
                           <MetricRow
@@ -990,6 +1040,22 @@ export default function Home() {
           </aside>
         )}
       </main>
+
+      {isCalibrating && (
+        <PostureCalibrationOverlay
+          landmarksRef={landmarksRef}
+          gestureMetrics={gestureMetrics}
+          onComplete={(baseline: PostureBaseline) => {
+            setPosturalBaseline(baseline);
+            setIsCalibrating(false);
+            setIsFullscreen(false);
+          }}
+          onCancel={() => {
+            setIsCalibrating(false);
+            setIsFullscreen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

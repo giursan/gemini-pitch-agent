@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as cam from '@mediapipe/camera_utils';
 import type { FaceMesh as FaceMeshType, Results } from '@mediapipe/face_mesh';
 import type { HandResult } from './useGestureRecognizer';
+import { LM, angleBetween, TED_BENCHMARKS, type PostureBaseline } from './useBodyLanguageAnalysis';
 
 /** Raw landmarks exposed each frame for downstream analysis hooks */
 export interface BodyLandmarks {
@@ -21,6 +22,8 @@ export function useEyeContact(
     features: { eyeContact: boolean; posture: boolean } = { eyeContact: true, posture: true },
     /** Optional ref to hand landmark results from useGestureRecognizer, drawn in the pose pass */
     handResultsRef?: React.RefObject<HandResult[]>,
+    /** Optional calibrated baseline to render accurate posture diagnostic colors */
+    baseline: PostureBaseline | null = null
 ) {
     const [eyeContactScore, setEyeContactScore] = useState<number>(100);
     const faceMeshRef = useRef<FaceMeshType | null>(null);
@@ -202,6 +205,7 @@ export function useEyeContact(
             }
 
             if (activeCanvasCtx && results.poseLandmarks) {
+                const ctx = activeCanvasCtx;
                 const hasHandResults = handResultsRef?.current && handResultsRef.current.length > 0;
 
                 if (hasHandResults) {
@@ -213,16 +217,74 @@ export function useEyeContact(
                     const filteredConnections = POSE_CONNECTIONS.filter(
                         ([a, b]: [number, number]) => !HAND_INDICES.has(a) && !HAND_INDICES.has(b)
                     );
-                    drawConnectors(activeCanvasCtx, filteredLandmarks, filteredConnections, { color: '#00FF00', lineWidth: 4 });
-                    drawLandmarks(activeCanvasCtx, filteredLandmarks.filter((_: any, i: number) => !HAND_INDICES.has(i)), { color: '#FF0000', lineWidth: 2 });
+                    drawConnectors(ctx, filteredLandmarks, filteredConnections, { color: '#00FF00', lineWidth: 4 });
+                    drawLandmarks(ctx, filteredLandmarks.filter((_: any, i: number) => !HAND_INDICES.has(i)), { color: '#FF0000', lineWidth: 2 });
                 } else {
-                    drawConnectors(activeCanvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
-                    drawLandmarks(activeCanvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+                    drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+                    drawLandmarks(ctx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+                }
+
+                // ── Draw Posture Angle Analysis ──
+                if (results.poseLandmarks && results.poseLandmarks.length >= 25 && canvasRef?.current) {
+                    const pose = results.poseLandmarks;
+                    const w = canvasRef.current.width;
+                    const h = canvasRef.current.height;
+
+                    const earMid = {
+                        x: (pose[LM.LEFT_EAR].x + pose[LM.RIGHT_EAR].x) / 2,
+                        y: (pose[LM.LEFT_EAR].y + pose[LM.RIGHT_EAR].y) / 2,
+                    };
+                    const shoulderMid = {
+                        x: (pose[LM.LEFT_SHOULDER].x + pose[LM.RIGHT_SHOULDER].x) / 2,
+                        y: (pose[LM.LEFT_SHOULDER].y + pose[LM.RIGHT_SHOULDER].y) / 2,
+                    };
+                    const hipMid = {
+                        x: (pose[LM.LEFT_HIP].x + pose[LM.RIGHT_HIP].x) / 2,
+                        y: (pose[LM.LEFT_HIP].y + pose[LM.RIGHT_HIP].y) / 2,
+                    };
+
+                    const angle = Math.round(angleBetween(earMid, shoulderMid, hipMid));
+                    const targetAngle = baseline ? Math.max(baseline.idealAngle - 15, TED_BENCHMARKS.slouchAngle - 10) : TED_BENCHMARKS.slouchAngle;
+                    const isGood = angle > targetAngle;
+
+                    // Draw points
+                    ctx.fillStyle = isGood ? '#00FF00' : '#FF0000';
+                    [earMid, shoulderMid, hipMid].forEach(p => {
+                        ctx.beginPath();
+                        ctx.arc(p.x * w, p.y * h, 6, 0, 2 * Math.PI);
+                        ctx.fill();
+                    });
+
+                    // Draw lines for the angle
+                    ctx.strokeStyle = isGood ? 'rgba(0, 255, 0, 0.5)' : 'rgba(255, 0, 0, 0.5)';
+                    ctx.lineWidth = 6;
+                    ctx.beginPath();
+                    ctx.moveTo(earMid.x * w, earMid.y * h);
+                    ctx.lineTo(shoulderMid.x * w, shoulderMid.y * h);
+                    ctx.lineTo(hipMid.x * w, hipMid.y * h);
+                    ctx.stroke();
+
+                    // Draw angle text
+                    ctx.fillStyle = 'white';
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 4;
+                    ctx.font = 'bold 28px sans-serif';
+                    const text = `${angle}°`;
+                    const textX = shoulderMid.x * w + 30;
+                    const textY = shoulderMid.y * h;
+                    ctx.strokeText(text, textX, textY);
+                    ctx.fillText(text, textX, textY);
+
+                    // Label "Posture Angle"
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.strokeText('POSTURE', textX, textY - 25);
+                    ctx.fillText('POSTURE', textX, textY - 25);
                 }
             }
 
             // ── Draw hand skeletons from GestureRecognizer (synchronized) ──
             if (activeCanvasCtx && handResultsRef?.current && handResultsRef.current.length > 0 && canvasRef?.current) {
+                const ctx = activeCanvasCtx;
                 const w = canvasRef.current.width;
                 const h = canvasRef.current.height;
                 const HAND_CONNECTIONS: [number, number][] = [
@@ -240,32 +302,32 @@ export function useEyeContact(
                     const dotColor = isCyan ? 'rgba(0, 255, 255, 1)' : 'rgba(255, 0, 255, 1)';
 
                     // Draw connections
-                    activeCanvasCtx.strokeStyle = lineColor;
-                    activeCanvasCtx.lineWidth = 3;
+                    ctx.strokeStyle = lineColor;
+                    ctx.lineWidth = 3;
                     for (const [a, b] of HAND_CONNECTIONS) {
                         const la = hand.landmarks[a];
                         const lb = hand.landmarks[b];
-                        activeCanvasCtx.beginPath();
-                        activeCanvasCtx.moveTo(la.x * w, la.y * h);
-                        activeCanvasCtx.lineTo(lb.x * w, lb.y * h);
-                        activeCanvasCtx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(la.x * w, la.y * h);
+                        ctx.lineTo(lb.x * w, lb.y * h);
+                        ctx.stroke();
                     }
 
                     // Draw landmark dots
-                    activeCanvasCtx.fillStyle = dotColor;
+                    ctx.fillStyle = dotColor;
                     for (const lm of hand.landmarks) {
-                        activeCanvasCtx.beginPath();
-                        activeCanvasCtx.arc(lm.x * w, lm.y * h, 4, 0, 2 * Math.PI);
-                        activeCanvasCtx.fill();
+                        ctx.beginPath();
+                        ctx.arc(lm.x * w, lm.y * h, 4, 0, 2 * Math.PI);
+                        ctx.fill();
                     }
 
                     // Brighter fingertip dots
-                    activeCanvasCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
                     for (const idx of [4, 8, 12, 16, 20]) {
                         const lm = hand.landmarks[idx];
-                        activeCanvasCtx.beginPath();
-                        activeCanvasCtx.arc(lm.x * w, lm.y * h, 6, 0, 2 * Math.PI);
-                        activeCanvasCtx.fill();
+                        ctx.beginPath();
+                        ctx.arc(lm.x * w, lm.y * h, 6, 0, 2 * Math.PI);
+                        ctx.fill();
                     }
 
                     // Connect hand wrist to pose elbow (bridge the two skeletons)
@@ -273,12 +335,12 @@ export function useEyeContact(
                     const elbow = results.poseLandmarks?.[elbowIdx];
                     if (elbow && elbow.visibility > 0.5) {
                         const wrist = hand.landmarks[0];
-                        activeCanvasCtx.strokeStyle = lineColor;
-                        activeCanvasCtx.lineWidth = 3;
-                        activeCanvasCtx.beginPath();
-                        activeCanvasCtx.moveTo(elbow.x * w, elbow.y * h);
-                        activeCanvasCtx.lineTo(wrist.x * w, wrist.y * h);
-                        activeCanvasCtx.stroke();
+                        ctx.strokeStyle = lineColor;
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.moveTo(elbow.x * w, elbow.y * h);
+                        ctx.lineTo(wrist.x * w, wrist.y * h);
+                        ctx.stroke();
                     }
                 }
             }
