@@ -21,8 +21,15 @@ export interface SessionSummary {
     endedAt: number | null;
     durationMs: number;
     feedbackMode: 'silent' | 'shark';
+    agents: {
+        eyeContact: boolean;
+        posture: boolean;
+        gestures: boolean;
+        speech: boolean;
+    };
     timeline: TimelineEvent[];
     cvSnapshots: Record<string, any>[];   // periodic CV telemetry snapshots
+    tasksContext?: string;               // project improvement tasks
 }
 
 // ── Delivery Report Type ────────────────────────────────────────────────────────
@@ -30,6 +37,7 @@ export interface SessionSummary {
 export interface DeliveryReport {
     pacing: number;
     filler: number;
+    fillerWords?: string[];
     vocalVariety?: number;
     transcript: string;
 }
@@ -42,7 +50,6 @@ export interface DeliveryReport {
  * - Transcription
  * - Pacing (WPM)
  * - Filler word counting
- * - Shark mode spoken feedback
  */
 export class DeliveryAgent {
     private session: GenAISession | null = null;
@@ -60,7 +67,7 @@ export class DeliveryAgent {
     public startedAt: number = 0;
 
     private static readonly MODEL = process.env.GEMINI_MODEL
-        || 'models/gemini-2.5-flash-native-audio-latest';
+        || 'models/gemini-2.5-flash-native-audio-preview-12-2025';
 
     constructor(
         sessionId: string,
@@ -102,30 +109,19 @@ export class DeliveryAgent {
 
         const ai = new GoogleGenAI({
             apiKey: process.env.GOOGLE_GENAI_API_KEY,
+            httpOptions: { apiVersion: 'v1alpha' }
         });
 
-        // Build focused system instruction
-        const modeAddendum = this.feedbackMode === 'shark'
-            ? DELIVERY_AGENT_SHARK_ADDENDUM
-            : DELIVERY_AGENT_SILENT_ADDENDUM;
-
-        const systemInstruction = DELIVERY_AGENT_PROMPT + modeAddendum;
+        // ALWAYS use SILENT mode for the Live API to ensure connection stability.
+        // As requested: A complete copy of the working silent mode.
+        // Shark coaching logic is handled externally by the Orchestrator + Client TTS.
+        const systemInstruction = DELIVERY_AGENT_PROMPT + DELIVERY_AGENT_SILENT_ADDENDUM;
 
         const config: LiveConnectConfig = {
             responseModalities: ['AUDIO'] as any,
             systemInstruction: { parts: [{ text: systemInstruction }] },
             tools: getDeliveryAgentTools(),
         };
-
-        if (this.feedbackMode === 'shark') {
-            config.speechConfig = {
-                voiceConfig: {
-                    prebuiltVoiceConfig: {
-                        voiceName: 'Aoede',
-                    },
-                },
-            };
-        }
 
         this.session = await ai.live.connect({
             model: DeliveryAgent.MODEL,
@@ -143,12 +139,23 @@ export class DeliveryAgent {
                                 const report: DeliveryReport = {
                                     pacing: Number(args.pacing) || 0,
                                     filler: Number(args.filler) || 0,
+                                    fillerWords: Array.isArray(args.fillerWords) ? args.fillerWords : [],
                                     vocalVariety: args.vocalVariety != null ? Number(args.vocalVariety) : undefined,
                                     transcript: String(args.transcript || ''),
                                 };
                                 this.logEvent('delivery_report', report);
                                 this.onDeliveryReport?.(report);
                             }
+
+                            // IMPORTANT: In the Live API, every ToolCall MUST receive a corresponding ToolResponse.
+                            // If we don't respond (even to unrecognized tools), the session eventually hangs or terminates with 1011 Internal Error.
+                            this.session?.sendToolResponse({
+                                functionResponses: [{
+                                    name: fc.name,
+                                    id: fc.id,
+                                    response: { success: true }
+                                }]
+                            });
                         }
                     }
 
@@ -164,12 +171,12 @@ export class DeliveryAgent {
                     // Forward raw message to orchestrator for any additional processing
                     this.onRawMessage?.(message);
                 },
-                onerror: (e: ErrorEvent) => {
-                    console.error(`[DeliveryAgent:${this.sessionId}] Error:`, e.error);
-                    this.logEvent('system', { message: 'WebSocket error', error: String(e.error) });
+                onerror: (e: any) => {
+                    console.error(`[DeliveryAgent:${this.sessionId}] Error:`, e);
+                    this.logEvent('system', { message: 'WebSocket error', error: String(e || 'unknown') });
                 },
                 onclose: (e: any) => {
-                    console.log(`[DeliveryAgent:${this.sessionId}] WebSocket closed. Code: ${e?.code}`);
+                    console.log(`[DeliveryAgent:${this.sessionId}] WebSocket closed. Code: ${e?.code}, Reason: ${e?.reason || 'no reason'}`);
                 },
             },
         });
@@ -205,7 +212,9 @@ export class DeliveryAgent {
 
     public endTurn(): void {
         if (!this.session) return;
-        this.session.sendClientContent({ turnComplete: true });
+        // The Gemini Live API inherently supports barge-in using native Voice Activity Detection (VAD)
+        // when streaming audio chunks via sendRealtimeInput. Manually sending empty turnComplete: true
+        // causes a 1007 "Invalid Argument" crash in @google/genai version 1.14.0.
     }
 
     public disconnect(): void {
@@ -217,7 +226,7 @@ export class DeliveryAgent {
         }
     }
 
-    public getSessionSummary(): SessionSummary {
+    public getSessionSummary(): Omit<SessionSummary, 'agents'> {
         const endedAt = Date.now();
         return {
             sessionId: this.sessionId,

@@ -10,6 +10,8 @@ import { loadBenchmarkProfile, scoreSession } from '../../hooks/useTEDBenchmarks
 import SessionControls, { type SessionState, type FeedbackMode, type AgentSelection } from '../SessionControls';
 import FeedbackOverlay, { type Alert } from '../FeedbackOverlay';
 import ReportView from '../ReportView';
+import { useSearchParams } from 'next/navigation';
+import { Folder } from 'lucide-react';
 
 // ── Audio Util ──────────────────────────────────────────────────────────────────
 
@@ -33,7 +35,7 @@ function floatTo16BitPcmAndBase64(input: Float32Array): string {
 export default function Home() {
   const [sessionState, setSessionState] = useState<SessionState>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionMetrics, setSessionMetrics] = useState({ pacing: 0, filler: 0, contentScore: 0, deliveryScore: 0 });
+  const [sessionMetrics, setSessionMetrics] = useState({ pacing: 0, filler: 0, totalFillers: 0, fillerWords: [] as string[], contentScore: 0, deliveryScore: 0 });
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const [feed, setFeed] = useState<{ timestamp: number, source: string, message: string }[]>([]);
@@ -42,6 +44,7 @@ export default function Home() {
 
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'gemini', text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const [liveTranscript, setLiveTranscript] = useState('');
   const [enableGestures, setEnableGestures] = useState(false);
   const [enabledAgents, setEnabledAgents] = useState<AgentSelection>({
     eyeContact: true,
@@ -54,6 +57,7 @@ export default function Home() {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
   const playbackCtxRef = useRef<AudioContext | null>(null);
   const playbackTimeRef = useRef(0);
   const telemetryIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -61,23 +65,98 @@ export default function Home() {
   const alertIdRef = useRef(0);
   const feedbackModeRef = useRef<FeedbackMode>('silent');
 
+  const BARGE_IN_THRESHOLD = 0.05;
+
+  const cleanupMedia = useCallback(() => {
+    if (telemetryIntervalRef.current) {
+      clearInterval(telemetryIntervalRef.current);
+      telemetryIntervalRef.current = null;
+    }
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => { });
+      audioContextRef.current = null;
+    }
+    if (playbackCtxRef.current) {
+      playbackCtxRef.current.close().catch(() => { });
+      playbackCtxRef.current = null;
+    }
+
+    // Stop microphone tracks
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach(track => {
+        track.stop();
+        track.enabled = false;
+      });
+      audioStreamRef.current = null;
+    }
+
+    // Stop webcam tracks from react-webcam
+    const webcamStream = webcamRef.current?.video?.srcObject as MediaStream | null;
+    if (webcamStream) {
+      webcamStream.getTracks().forEach(track => {
+        track.stop();
+        track.enabled = false;
+      });
+      if (webcamRef.current?.video) {
+        webcamRef.current.video.srcObject = null;
+      }
+    }
+
+    playbackTimeRef.current = 0;
+  }, []);
+
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get('projectId');
+  const [projectTitle, setProjectTitle] = useState<string | null>(null);
+
   const isActive = sessionState === 'recording' || sessionState === 'paused';
 
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isVideoReady, setIsVideoReady] = useState(false);
+
+  // Keep a mutable ref of the latest telemetry so the interval closure always sees fresh data
+  const latestTelemetryRef = useRef<any>({});
+
+
+
+  useEffect(() => {
+    // Ensure the video element is mounted before starting MediaPipe
+    const checkVideo = setInterval(() => {
+      const video = (webcamRef.current as any)?.video || null;
+      if (video) {
+        videoElementRef.current = video;
+        setIsVideoReady(true);
+        clearInterval(checkVideo);
+      }
+    }, 500);
+    return () => clearInterval(checkVideo);
+  }, []);
 
   // CV Hooks (run while session is active)
-  // Note: handResultsRef from gesture hook is passed to eye contact hook for synchronized drawing
-  const { metrics: gestureMetrics, handResultsRef: gestureHandResultsRef } = useGestureRecognizer(videoElementRef, enableGestures && enabledAgents.gestures);
+  const { metrics: gestureMetrics, handResultsRef: gestureHandResultsRef } = useGestureRecognizer(videoElementRef, enableGestures && enabledAgents.gestures && isVideoReady);
   const { eyeContactScore: realTimeEyeContact, landmarksRef } = useEyeContact(
-    webcamRef as any || { current: null }, overlayCanvasRef, false, enabledAgents, gestureHandResultsRef
+    isVideoReady ? videoElementRef : { current: null }, overlayCanvasRef, false, enabledAgents, gestureHandResultsRef
   );
   const { metrics: bodyMetrics, benchmarks } = useBodyLanguageAnalysis(landmarksRef, isActive);
 
-  useEffect(() => {
-    const video = (webcamRef.current as any)?.video || null;
-    videoElementRef.current = video;
-  });
+  // Update ref every render (after hooks so variables are defined)
+  latestTelemetryRef.current = {
+    eyeContact: realTimeEyeContact,
+    postureAngle: bodyMetrics?.postureAngle || 0,
+    isGoodPosture: bodyMetrics?.isGoodPosture || false,
+    gesturesPerMin: bodyMetrics?.gesturesPerMin || 0,
+    handVisibility: bodyMetrics?.handVisibility || 0,
+    smileScore: bodyMetrics?.smileScore || 0,
+    overallScore: bodyMetrics?.overallScore || 0,
+    currentGestures: gestureMetrics?.currentGestures?.map((g: any) => g.gesture) || [],
+    openGestureRatio: gestureMetrics?.openGestureRatio ?? 0,
+    handsDetected: gestureMetrics?.handsDetected ?? 0,
+  };
 
   // Stagger GestureRecognizer by 3 seconds after session starts to prevent WASM load crash
   useEffect(() => {
@@ -99,6 +178,15 @@ export default function Home() {
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
   }, []);
 
+  useEffect(() => {
+    if (projectId) {
+      fetch(`http://localhost:8080/projects/${projectId}`)
+        .then(r => r.json())
+        .then(data => setProjectTitle(data.title))
+        .catch(console.error);
+    }
+  }, [projectId]);
+
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       fullscreenContainerRef.current?.requestFullscreen().catch(console.error);
@@ -107,7 +195,7 @@ export default function Home() {
     }
   };
 
-  const BARGE_IN_THRESHOLD = 0.05;
+
 
   // ── Cleanup on unmount ──────────────────────────────────────────────────
   useEffect(() => {
@@ -117,25 +205,7 @@ export default function Home() {
     };
   }, []);
 
-  const cleanupMedia = useCallback(() => {
-    if (telemetryIntervalRef.current) {
-      clearInterval(telemetryIntervalRef.current);
-      telemetryIntervalRef.current = null;
-    }
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    if (playbackCtxRef.current) {
-      playbackCtxRef.current.close();
-      playbackCtxRef.current = null;
-    }
-    playbackTimeRef.current = 0;
-  }, []);
+
 
   // ── Shark Mode Audio Playback ─────────────────────────────────────────
 
@@ -169,24 +239,54 @@ export default function Home() {
     playbackTimeRef.current = startTime + buffer.duration;
   }, []);
 
+  const speakText = useCallback((text: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+
+    // Interrupt any active speech for a true "Shark" interruption vibe
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = window.speechSynthesis.getVoices();
+
+    // Attempt to select a high-quality female/authoritative voice if available
+    const preferredVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Female') || v.name.includes('Aria') || v.name.includes('Samantha'))) || voices[0];
+
+    if (preferredVoice) utterance.voice = preferredVoice;
+    utterance.rate = 1.05; // Slightly faster for punchy feedback
+    utterance.pitch = 0.95; // Slightly deeper for authority
+    utterance.volume = 1.0;
+
+    window.speechSynthesis.speak(utterance);
+  }, []);
+
   // ── Session Lifecycle ───────────────────────────────────────────────────
 
   const handleStart = async (feedbackMode: FeedbackMode, agents: AgentSelection) => {
     setEnabledAgents(agents);
     feedbackModeRef.current = feedbackMode;
+
+    if (!audioContextRef.current) {
+      audioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
+    }
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume().catch(console.error);
+    }
+
     try {
       if (!webcamRef.current?.video) return;
       let stream = webcamRef.current.video.srcObject as MediaStream;
 
-      // Force request audio permissions if the webcam stream didn't bundle it automatically
-      if (agents.speech && (!stream || stream.getAudioTracks().length === 0)) {
+      if (agents.speech) {
         try {
-          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          if (stream) {
-            audioStream.getAudioTracks().forEach(track => stream.addTrack(track));
-          } else {
-            stream = audioStream;
-          }
+          const streamConfig = {
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
+          };
+          const audioStream = await navigator.mediaDevices.getUserMedia(streamConfig);
+          audioStreamRef.current = audioStream;
         } catch (e) {
           console.error("Microphone permission denied or unavailable:", e);
           alert("Microphone access is required for the Speech agent. Please allow microphone permissions in your browser.");
@@ -198,7 +298,12 @@ export default function Home() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'session_start', feedbackMode, agents }));
+        ws.send(JSON.stringify({
+          type: 'session_start',
+          feedbackMode,
+          agents,
+          projectId
+        }));
       };
 
       ws.onmessage = (event) => {
@@ -210,9 +315,13 @@ export default function Home() {
             setSessionId(data.sessionId);
             setSessionState('recording');
             setAlerts([]);
+            setLiveTranscript('');
             setFeed([{ timestamp: Date.now(), source: 'System', message: 'Multi-agent session started. Delivery + Content + CV agents active.' }]);
             setReport(null);
-            startMediaExtraction(stream, ws);
+
+            // Pass the dedicated audio stream if available, otherwise the webcam stream
+            const activeStream = audioStreamRef.current || stream;
+            startMediaExtraction(activeStream, ws);
             return;
 
           case 'session_paused':
@@ -256,7 +365,9 @@ export default function Home() {
           case 'metrics':
             setSessionMetrics(prev => ({
               pacing: data.pacing ?? prev.pacing,
-              filler: data.filler ?? prev.filler,
+              filler: data.fillerRate ?? prev.filler,
+              totalFillers: data.totalFillers ?? prev.totalFillers,
+              fillerWords: data.allFillerWords ?? prev.fillerWords,
               contentScore: data.contentScore ?? prev.contentScore,
               deliveryScore: data.deliveryScore ?? prev.deliveryScore,
             }));
@@ -269,9 +380,31 @@ export default function Home() {
             }
             return;
 
+          case 'shark_speak':
+            if (feedbackModeRef.current === 'shark' && data.text) {
+              speakText(data.text);
+              // Also show as a critical alert
+              const id = `shark-${Date.now()}`;
+              setAlerts(prev => [{
+                id,
+                severity: 'critical' as const,
+                message: data.text,
+                timestamp: Date.now(),
+              }, ...prev].slice(0, 5));
+            }
+            return;
           // ── Chat Replies ───────────────────────────────────────────
           case 'chat_reply':
             setChatMessages(prev => [...prev, { role: 'gemini', text: data.text }]);
+            return;
+
+          // ── Live Transcript ─────────────────────────────────────────
+          case 'transcript':
+            setLiveTranscript(prev => {
+              // Keep only the last 1000 characters to prevent UI lag
+              const newTranscript = (prev + ' ' + data.text).trim();
+              return newTranscript.slice(-1000);
+            });
             return;
         }
 
@@ -292,6 +425,8 @@ export default function Home() {
               setSessionMetrics(prev => ({
                 pacing: fc.args?.pacing ?? prev.pacing,
                 filler: fc.args?.filler ?? prev.filler,
+                totalFillers: prev.totalFillers,
+                fillerWords: prev.fillerWords,
                 contentScore: fc.args?.contentScore ?? prev.contentScore,
                 deliveryScore: fc.args?.deliveryScore ?? prev.deliveryScore,
               }));
@@ -344,7 +479,7 @@ export default function Home() {
     setSessionId(null);
     setAlerts([]);
     setChatMessages([]);
-    setSessionMetrics({ pacing: 0, filler: 0, contentScore: 0, deliveryScore: 0 });
+    setSessionMetrics({ pacing: 0, filler: 0, totalFillers: 0, fillerWords: [], contentScore: 0, deliveryScore: 0 });
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -365,13 +500,17 @@ export default function Home() {
 
   // ── Media Extraction ────────────────────────────────────────────────────
 
-  const startMediaExtraction = (stream: MediaStream, ws: WebSocket) => {
-    const audioCtx = new window.AudioContext({ sampleRate: 16000 });
-    audioContextRef.current = audioCtx;
+  const startMediaExtraction = async (stream: MediaStream, ws: WebSocket) => {
+    const audioCtx = audioContextRef.current;
+    if (!audioCtx) return;
 
-    const audioStream = new MediaStream(stream.getAudioTracks());
-    if (audioStream.getAudioTracks().length > 0) {
-      const source = audioCtx.createMediaStreamSource(audioStream);
+    // Ensure there is an active audio track
+    const audioTrack = stream.getAudioTracks()[0];
+    if (audioTrack) {
+      // Create a fresh MediaStream with just the audio track to avoid Chrome muted-video inheritance bugs
+      const activeAudioStream = new MediaStream([audioTrack]);
+      const source = audioCtx.createMediaStreamSource(activeAudioStream);
+
       const analyser = audioCtx.createAnalyser();
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
@@ -384,15 +523,12 @@ export default function Home() {
         if (ws.readyState !== WebSocket.OPEN) return;
         const inputData = e.inputBuffer.getChannelData(0);
 
-        // VAD
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        analyser.getByteTimeDomainData(dataArray);
+        // VAD - Direct RMS calculation from float buffer (more reliable than Analyser on some systems)
         let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          const x = (dataArray[i] - 128) / 128;
-          sum += x * x;
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i];
         }
-        const rms = Math.sqrt(sum / dataArray.length);
+        const rms = Math.sqrt(sum / inputData.length);
 
         if (Math.random() < 0.25) {
           console.log(`[Audio Debug] Mic RMS amplitude: ${rms.toFixed(4)}`);
@@ -419,18 +555,7 @@ export default function Home() {
 
       ws.send(JSON.stringify({
         type: 'client_telemetry',
-        data: {
-          eyeContact: realTimeEyeContact,
-          postureAngle: bodyMetrics.postureAngle,
-          isGoodPosture: bodyMetrics.isGoodPosture,
-          gesturesPerMin: bodyMetrics.gesturesPerMin,
-          handVisibility: bodyMetrics.handVisibility,
-          smileScore: bodyMetrics.smileScore,
-          overallScore: bodyMetrics.overallScore,
-          currentGestures: gestureMetrics?.currentGestures?.map(g => g.gesture) || [],
-          openGestureRatio: gestureMetrics?.openGestureRatio ?? 0,
-          handsDetected: gestureMetrics?.handsDetected ?? 0,
-        },
+        data: latestTelemetryRef.current,
       }));
     }, 1000);
   };
@@ -447,9 +572,17 @@ export default function Home() {
     <div className="min-h-[100vh] bg-neutral-50 flex flex-col font-sans selection:bg-google-blue/10">
       {/* Local Header */}
       <header className="px-8 py-5 flex items-center justify-between bg-white border-b border-neutral-200">
-        <h1 className="text-xl font-bold text-neutral-900 leading-none">
-          Live Practice
-        </h1>
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-bold text-neutral-900 leading-none">
+            Live Practice
+          </h1>
+          {projectTitle && (
+            <div className="flex items-center gap-2 px-3 py-1 bg-google-blue/5 border border-google-blue/10 rounded-full">
+              <Folder className="w-3 h-3 text-google-blue" />
+              <span className="text-[10px] font-black uppercase text-google-blue tracking-tight">{projectTitle}</span>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-6">
           <SessionControls
             state={sessionState}
@@ -466,7 +599,7 @@ export default function Home() {
         <section className={`flex-1 flex flex-col gap-6 w-full ${isFullscreen ? 'fixed inset-0 z-50 !p-0 bg-black' : ''}`} ref={fullscreenContainerRef}>
           <div className={`relative overflow-hidden bg-black flex items-center justify-center group ${isFullscreen ? 'w-full h-full rounded-none' : 'rounded-lg border border-neutral-200 aspect-video shadow-sm'}`}>
             <Webcam
-              audio={true}
+              audio={false}
               ref={webcamRef}
               screenshotFormat="image/jpeg"
               videoConstraints={{ width: 1280, height: 720, facingMode: "user" }}
@@ -598,7 +731,8 @@ export default function Home() {
               {enabledAgents.posture && <QuickMetric label="Posture Score" value={`${bodyMetrics.overallScore}%`} color="blue" />}
               {enabledAgents.eyeContact && <QuickMetric label="Gaze Contact" value={`${realTimeEyeContact}%`} color="green" />}
               {enabledAgents.speech && <QuickMetric label="Pacing (WPM)" value={sessionMetrics.pacing || '--'} color="amber" />}
-              {enabledAgents.speech && <QuickMetric label="Filler Words" value={sessionMetrics.filler} color="red" />}
+              {enabledAgents.speech && <QuickMetric label="Filler Rate" value={`${sessionMetrics.filler}/min`} color="red" />}
+              {enabledAgents.speech && <QuickMetric label="Filler Total" value={sessionMetrics.totalFillers} color="red" />}
             </div>
           )}
 
@@ -654,6 +788,19 @@ export default function Home() {
                     <div className="space-y-4 pt-2">
                       <MetricRow label="Pacing" value={sessionMetrics.pacing > 0 ? `${sessionMetrics.pacing} WPM` : '--'} good={sessionMetrics.pacing > 120 && sessionMetrics.pacing < 160} />
                       <MetricRow label="Filler Frequency" value={`${sessionMetrics.filler}/min`} good={sessionMetrics.filler < 5} />
+                      <MetricRow label="Total Fillers Detect" value={sessionMetrics.totalFillers} good={sessionMetrics.totalFillers < 10} />
+                      {sessionMetrics.fillerWords.length > 0 && (
+                        <div className="pt-1">
+                          <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider mb-2">Filler Breakdown</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {Array.from(new Set(sessionMetrics.fillerWords)).map((word, i) => (
+                              <span key={i} className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded text-[9px] font-mono text-neutral-600">
+                                {word} <span className="text-google-red font-bold">x{sessionMetrics.fillerWords.filter(w => w === word).length}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <MetricRow label="Delivery Grade" value={sessionMetrics.deliveryScore > 0 ? `${sessionMetrics.deliveryScore}/100` : '--'} good={sessionMetrics.deliveryScore >= 70} />
                       <MetricRow label="Content Depth" value={sessionMetrics.contentScore > 0 ? `${sessionMetrics.contentScore}/100` : '--'} good={sessionMetrics.contentScore >= 70} />
                     </div>
@@ -727,6 +874,27 @@ export default function Home() {
                   </section>
                 )}
               </div>
+
+              {/* Live Transcript Section */}
+              {enabledAgents.speech && (
+                <div className="mt-10 pt-8 border-t border-neutral-100">
+                  <SectionHeader icon={<Terminal className="w-5 h-5" />} title="Live Transcript" subtitle="Gemini Voice Stream (Experimental)" />
+                  <div className="mt-4 p-5 bg-neutral-900 rounded-xl border border-white/10 shadow-inner relative overflow-hidden group">
+                    {/* Decorative background pulse */}
+                    <div className="absolute top-0 right-0 p-3">
+                      <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-google-green animate-pulse' : 'bg-neutral-600'}`} />
+                    </div>
+
+                    <div className="max-h-[120px] overflow-y-auto custom-scrollbar">
+                      <p className="text-sm font-mono text-google-green/90 leading-relaxed selection:bg-google-green/20">
+                        <span className="text-google-green/40 mr-2">$</span>
+                        {liveTranscript || (isActive ? 'Listening for audio input...' : 'Start session to begin transcription.')}
+                        {isActive && <span className="inline-block w-2 h-4 bg-google-green/50 ml-1 animate-pulse" />}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </section>

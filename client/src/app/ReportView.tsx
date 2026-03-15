@@ -1,6 +1,6 @@
 'use client';
 
-import { Eye, User, Hand, Mic, FileText, BarChart2, Check, ArrowUp, Lightbulb } from 'lucide-react';
+import { Eye, User, Hand, Mic, FileText, BarChart2, Check, ArrowUp, Lightbulb, Target, Award, List } from 'lucide-react';
 
 interface ReportViewProps {
     report: Record<string, any>;
@@ -131,6 +131,60 @@ export default function ReportView({ report, sessionId, onNewSession }: ReportVi
                                 </div>
                             ))}
                         </div>
+
+                        {/* Tasks Section */}
+                        {((report.newTasks && report.newTasks.length > 0) || (report.resolvedTaskIds && report.resolvedTaskIds.length > 0)) && (
+                            <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden shadow-sm">
+                                <div className="px-7 py-5 bg-neutral-50 border-b border-neutral-200 flex items-center justify-between">
+                                    <h3 className="text-[11px] font-bold text-neutral-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                                        <List className="w-4 h-4 text-google-blue" />
+                                        Task Evolution
+                                    </h3>
+                                    <span className="text-[10px] font-bold text-neutral-400">SESSION IMPACT</span>
+                                </div>
+                                <div className="p-7 space-y-6">
+                                    {/* New Tasks */}
+                                    {report.newTasks && report.newTasks.length > 0 && (
+                                        <div>
+                                            <h4 className="text-xs font-bold text-neutral-900 mb-4 flex items-center gap-2">
+                                                <Target className="w-4 h-4 text-google-red" />
+                                                New Focus Areas
+                                            </h4>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                {report.newTasks.map((task: any, i: number) => (
+                                                    <div key={i} className="p-4 rounded-lg bg-google-red/5 border border-google-red/10 flex flex-col gap-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded bg-google-red text-white shadow-sm shadow-google-red/20">{task.category || 'general'}</span>
+                                                        </div>
+                                                        <p className="text-sm font-medium text-neutral-700 leading-snug">{task.description}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Resolved Tasks */}
+                                    {report.resolvedTaskIds && report.resolvedTaskIds.length > 0 && (
+                                        <div className="pt-6 border-t border-dashed border-neutral-100">
+                                            <h4 className="text-xs font-bold text-neutral-900 mb-4 flex items-center gap-2">
+                                                <Award className="w-4 h-4 text-google-green" />
+                                                Goals Achieved
+                                            </h4>
+                                            <div className="space-y-3">
+                                                {report.resolvedTaskIds.map((id: string, i: number) => (
+                                                    <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-google-green/5 border border-google-green/10 text-sm font-medium text-google-green">
+                                                        <div className="w-5 h-5 rounded-full bg-google-green flex items-center justify-center">
+                                                            <Check className="w-3 h-3 text-white" />
+                                                        </div>
+                                                        Goal successfully reached!
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Right Column: Overall Score & Story */}

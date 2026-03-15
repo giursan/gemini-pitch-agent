@@ -1,0 +1,224 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import {
+    Plus,
+    Folder,
+    Calendar,
+    BarChart2,
+    ArrowRight,
+    ChevronRight,
+    Search,
+    Video
+} from 'lucide-react';
+
+interface Project {
+    projectId: string;
+    title: string;
+    description: string;
+    createdAt: number;
+    updatedAt: number;
+    sessionCount: number;
+    latestScore: number | null;
+    bestScore: number | null;
+}
+
+export default function ProjectsPage() {
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [newProjectTitle, setNewProjectTitle] = useState('');
+    const [newProjectDesc, setNewProjectDesc] = useState('');
+    const [isCreating, setIsCreating] = useState(false);
+
+    useEffect(() => {
+        fetchProjects();
+    }, []);
+
+    const fetchProjects = async () => {
+        try {
+            const res = await fetch('http://localhost:8080/projects');
+            const data = await res.json();
+            setProjects(data);
+        } catch (err) {
+            console.error('Failed to fetch projects:', err);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleCreateProject = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newProjectTitle.trim()) return;
+
+        setIsCreating(true);
+        try {
+            const res = await fetch('http://localhost:8080/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: newProjectTitle,
+                    description: newProjectDesc
+                })
+            });
+
+            if (res.ok) {
+                setNewProjectTitle('');
+                setNewProjectDesc('');
+                setIsCreateModalOpen(false);
+                fetchProjects();
+            }
+        } catch (err) {
+            console.error('Failed to create project:', err);
+        } finally {
+            setIsCreating(false);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-[#F8F9FA] p-8">
+            <div className="max-w-6xl mx-auto">
+                <header className="flex justify-between items-end mb-10">
+                    <div>
+                        <div className="flex items-center gap-2 text-google-blue mb-2">
+                            <Link href="/" className="text-sm font-medium hover:underline">Dashboard</Link>
+                            <ChevronRight className="w-4 h-4 text-neutral-400" />
+                            <span className="text-sm font-medium text-neutral-400">Projects</span>
+                        </div>
+                        <h1 className="text-3xl font-extrabold text-neutral-900 tracking-tight">Your Projects</h1>
+                        <p className="text-neutral-500 mt-2">Manage your pitch preparations and materials.</p>
+                    </div>
+
+                    <button
+                        onClick={() => setIsCreateModalOpen(true)}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-google-blue text-white rounded-full text-sm font-bold shadow-lg shadow-google-blue/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                    >
+                        <Plus className="w-5 h-5" />
+                        Create New Project
+                    </button>
+                </header>
+
+                {isLoading ? (
+                    <div className="flex justify-center p-20">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-google-blue"></div>
+                    </div>
+                ) : projects.length === 0 ? (
+                    <div className="bg-white rounded-2xl border border-neutral-200 border-dashed p-16 text-center shadow-sm">
+                        <div className="w-20 h-20 bg-neutral-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                            <Folder className="w-10 h-10 text-neutral-300" />
+                        </div>
+                        <h3 className="text-lg font-bold text-neutral-900 mb-2">No projects yet</h3>
+                        <p className="text-neutral-500 max-w-sm mx-auto mb-8">
+                            Organize your sessions by project. Each project can have its own materials and goals.
+                        </p>
+                        <button
+                            onClick={() => setIsCreateModalOpen(true)}
+                            className="text-google-blue font-bold px-6 py-2 border-2 border-google-blue rounded-full hover:bg-google-blue hover:text-white transition-all"
+                        >
+                            Start First Project
+                        </button>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {projects.map(project => (
+                            <Link
+                                href={`/projects/${project.projectId}`}
+                                key={project.projectId}
+                                className="group bg-white rounded-2xl border border-neutral-200 p-6 shadow-sm hover:shadow-xl hover:border-google-blue/30 transition-all duration-300"
+                            >
+                                <div className="flex justify-between items-start mb-4">
+                                    <div className="w-12 h-12 bg-google-blue/5 rounded-xl flex items-center justify-center text-google-blue group-hover:bg-google-blue group-hover:text-white transition-colors">
+                                        <Folder className="w-6 h-6" />
+                                    </div>
+                                    {project.latestScore && (
+                                        <div className="text-right">
+                                            <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Latest</p>
+                                            <p className="text-xl font-black text-google-green leading-tight">{project.latestScore}</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <h3 className="text-xl font-bold text-neutral-900 mb-2 truncate group-hover:text-google-blue transition-colors">
+                                    {project.title}
+                                </h3>
+                                <p className="text-sm text-neutral-500 line-clamp-2 mb-6 min-h-[40px]">
+                                    {project.description || 'No description provided.'}
+                                </p>
+
+                                <div className="flex items-center justify-between pt-4 border-t border-neutral-100">
+                                    <div className="flex gap-4">
+                                        <div className="flex items-center gap-1.5 text-neutral-400">
+                                            <Video className="w-3.5 h-3.5" />
+                                            <span className="text-xs font-bold">{project.sessionCount}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 text-neutral-400">
+                                            <BarChart2 className="w-3.5 h-3.5" />
+                                            <span className="text-xs font-bold">{project.bestScore || 0}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 text-google-blue text-xs font-black invisible group-hover:visible translate-x-1 group-hover:translate-x-0 transition-all">
+                                        OPEN <ArrowRight className="w-3 h-3" />
+                                    </div>
+                                </div>
+                            </Link>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Create Project Modal */}
+            {isCreateModalOpen && (
+                <div className="fixed inset-0 bg-neutral-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+                        <div className="p-8">
+                            <h2 className="text-2xl font-black text-neutral-900 mb-2">New Project</h2>
+                            <p className="text-sm text-neutral-500 mb-8">Set a focus for your upcoming pitch or presentation.</p>
+
+                            <form onSubmit={handleCreateProject} className="space-y-6">
+                                <div>
+                                    <label className="block text-[10px] font-black uppercase text-neutral-400 mb-2 tracking-widest">Title</label>
+                                    <input
+                                        autoFocus
+                                        value={newProjectTitle}
+                                        onChange={e => setNewProjectTitle(e.target.value)}
+                                        placeholder="e.g. Q4 Investor Deck"
+                                        className="w-full bg-neutral-50 border-2 border-neutral-100 rounded-xl px-4 py-3 text-sm focus:border-google-blue focus:bg-white outline-none transition-all placeholder:text-neutral-300"
+                                        required
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <label className="block text-[10px] font-black uppercase text-neutral-400 mb-2 tracking-widest">Description</label>
+                                    <textarea
+                                        value={newProjectDesc}
+                                        onChange={e => setNewProjectDesc(e.target.value)}
+                                        placeholder="What is this project about?"
+                                        rows={3}
+                                        className="w-full bg-neutral-50 border-2 border-neutral-100 rounded-xl px-4 py-3 text-sm focus:border-google-blue focus:bg-white outline-none transition-all placeholder:text-neutral-300"
+                                    />
+                                </div>
+
+                                <div className="flex gap-3 pt-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsCreateModalOpen(false)}
+                                        className="flex-1 px-6 py-3 rounded-xl border border-neutral-200 text-sm font-bold text-neutral-500 hover:bg-neutral-50 transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={isCreating}
+                                        className="flex-3 px-8 py-3 bg-google-blue text-white rounded-xl text-sm font-bold shadow-lg shadow-google-blue/20 disabled:opacity-50 flex items-center justify-center gap-2 min-w-[140px]"
+                                    >
+                                        {isCreating ? 'Creating...' : 'Create Project'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

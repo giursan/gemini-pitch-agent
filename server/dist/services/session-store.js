@@ -1,29 +1,27 @@
-import admin from 'firebase-admin';
-import path from 'path';
-import type { SessionSummary } from './adk-live-session';
-
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.sessionStore = void 0;
+const firebase_admin_1 = __importDefault(require("firebase-admin"));
+const path_1 = __importDefault(require("path"));
 // ── Initialize Firebase Admin ───────────────────────────────────────────────────
-
-const serviceAccountPath = path.resolve(process.cwd(), '..', 'service-account.json');
-
-if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccountPath),
+const serviceAccountPath = path_1.default.resolve(process.cwd(), '..', 'service-account.json');
+if (!firebase_admin_1.default.apps.length) {
+    firebase_admin_1.default.initializeApp({
+        credential: firebase_admin_1.default.credential.cert(serviceAccountPath),
         projectId: process.env.FIREBASE_PROJECT_ID || 'gemini-pitch-agent-c23da',
     });
 }
-
-const db = admin.firestore();
-db.settings({ ignoreUndefinedProperties: true });
+const db = firebase_admin_1.default.firestore();
 const SESSIONS_COLLECTION = 'sessions';
-
 // ── Session Store (Firestore) ───────────────────────────────────────────────────
-
-export const sessionStore = {
+exports.sessionStore = {
     /**
      * Save a session with its report.
      */
-    async save(summary: SessionSummary, report: Record<string, any>): Promise<void> {
+    async save(summary, report) {
         const data = {
             ...summary,
             report,
@@ -32,24 +30,14 @@ export const sessionStore = {
         await db.collection(SESSIONS_COLLECTION).doc(summary.sessionId).set(data);
         console.log(`Session saved to Firestore: ${summary.sessionId}`);
     },
-
     /**
      * List all saved sessions (metadata only).
      */
-    async list(): Promise<Array<{
-        sessionId: string;
-        startedAt: number;
-        endedAt: number | null;
-        durationMs: number;
-        feedbackMode: string;
-        overallScore: number;
-        title: string;
-    }>> {
+    async list() {
         const snapshot = await db.collection(SESSIONS_COLLECTION)
             .orderBy('startedAt', 'desc')
             .select('sessionId', 'startedAt', 'endedAt', 'durationMs', 'feedbackMode', 'report')
             .get();
-
         return snapshot.docs.map(doc => {
             const data = doc.data();
             return {
@@ -63,20 +51,19 @@ export const sessionStore = {
             };
         });
     },
-
     /**
      * Get a full session by ID.
      */
-    async get(sessionId: string): Promise<Record<string, any> | null> {
+    async get(sessionId) {
         const doc = await db.collection(SESSIONS_COLLECTION).doc(sessionId).get();
-        if (!doc.exists) return null;
-        return doc.data() as Record<string, any>;
+        if (!doc.exists)
+            return null;
+        return doc.data();
     },
-
     /**
      * Delete a session by ID.
      */
-    async delete(sessionId: string): Promise<void> {
+    async delete(sessionId) {
         await db.collection(SESSIONS_COLLECTION).doc(sessionId).delete();
         console.log(`Session deleted from Firestore: ${sessionId}`);
     },
