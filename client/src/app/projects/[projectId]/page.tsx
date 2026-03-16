@@ -27,7 +27,9 @@ import {
     X,
     Folder,
     Target,
-    Download
+    Download,
+    Edit2,
+    Save
 } from 'lucide-react';
 import ProjectCoachChat from '../../ProjectCoachChat';
 
@@ -83,6 +85,9 @@ export default function ProjectDetailPage() {
     const [isUploading, setIsUploading] = useState(false);
     const [selectedReport, setSelectedReport] = useState<Record<string, any> | null>(null);
     const [activeTab, setActiveTab] = useState<'dashboard' | 'materials'>('dashboard');
+    const [isEditing, setIsEditing] = useState(false);
+    const [editTitle, setEditTitle] = useState('');
+    const [editDescription, setEditDescription] = useState('');
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -102,7 +107,12 @@ export default function ProjectDetailPage() {
                 fetch(`http://localhost:8080/projects/${projectId}/sessions`)
             ]);
 
-            if (projRes.ok) setProject(await projRes.json());
+            if (projRes.ok) {
+                const data = await projRes.json();
+                setProject(data);
+                setEditTitle(data.title);
+                setEditDescription(data.description || '');
+            }
             if (matRes.ok) setMaterials(await matRes.json());
             if (taskRes.ok) setTasks(await taskRes.json());
             if (sessRes.ok) setSessions(await sessRes.json());
@@ -215,6 +225,26 @@ export default function ProjectDetailPage() {
         }
     };
 
+    const handleUpdateProject = async () => {
+        try {
+            const response = await fetch(`http://localhost:8080/projects/${projectId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: editTitle,
+                    description: editDescription
+                })
+            });
+
+            if (response.ok) {
+                setProject(prev => prev ? { ...prev, title: editTitle, description: editDescription } : null);
+                setIsEditing(false);
+            }
+        } catch (err) {
+            console.error('Failed to update project:', err);
+        }
+    };
+
     const formatBytes = (bytes: number, decimals: number = 2) => {
         if (bytes === 0) return '0 Bytes';
         const k = 1024;
@@ -307,9 +337,55 @@ export default function ProjectDetailPage() {
                                         className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-500" 
                                     />
                                 </div>
-                                <div>
-                                    <h1 className="text-3xl font-black text-neutral-900 tracking-tight">{project.title}</h1>
-                                    <p className="text-neutral-500 mt-1 max-w-2xl">{project.description || 'Manage your pitch preparation materials and practice sessions.'}</p>
+                                <div className="flex-1 min-w-0">
+                                    {isEditing ? (
+                                        <div className="space-y-3">
+                                            <input
+                                                type="text"
+                                                value={editTitle}
+                                                onChange={(e) => setEditTitle(e.target.value)}
+                                                className="w-full text-3xl font-black text-neutral-900 tracking-tight bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 focus:outline-none focus:border-neutral-900/40 transition-all"
+                                                placeholder="Project Title"
+                                                autoFocus
+                                            />
+                                            <textarea
+                                                value={editDescription}
+                                                onChange={(e) => setEditDescription(e.target.value)}
+                                                className="w-full text-sm text-neutral-500 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 focus:outline-none focus:border-neutral-900/40 transition-all min-h-[80px] resize-none"
+                                                placeholder="Project Description"
+                                            />
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={handleUpdateProject}
+                                                    className="flex items-center gap-2 px-4 py-2 bg-neutral-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-neutral-800 active:scale-95 transition-all shadow-lg shadow-neutral-900/10"
+                                                >
+                                                    <Save className="w-3.5 h-3.5" /> Save Changes
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        setEditTitle(project.title);
+                                                        setEditDescription(project.description || '');
+                                                        setIsEditing(false);
+                                                    }}
+                                                    className="flex items-center gap-2 px-4 py-2 bg-white text-neutral-400 border border-neutral-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:text-neutral-900 hover:border-neutral-900 transition-all active:scale-95"
+                                                >
+                                                    <X className="w-3.5 h-3.5" /> Cancel
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="group relative pr-10">
+                                            <h1 className="text-3xl font-black text-neutral-900 tracking-tight leading-tight mb-1">{project.title}</h1>
+                                            <p className="text-neutral-500 text-sm font-medium max-w-2xl leading-relaxed">{project.description || 'Manage your pitch preparation materials and practice sessions.'}</p>
+                                            <button 
+                                                onClick={() => setIsEditing(true)}
+                                                className="absolute top-1 -right-2 p-2 text-neutral-300 hover:text-neutral-900 hover:bg-neutral-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                                                title="Edit Metadata"
+                                            >
+                                                <Edit2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
