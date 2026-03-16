@@ -155,8 +155,11 @@ The infrastructure is delineated into high-performance web architecture coupled 
 
 Aura does not rely exclusively on zero-shot inference; it establishes its evaluation threshold mapping utilizing designated benchmark datasets.
 
-*   **Proprietary Gesture Classification Database:** A specialized JSON dataset synthesized internally via a local profiler implementation. This data translates 33 three-dimensional pose landmarks into normalized physical features across target gestural classes (open-palm, pointing, fidgeting, resting, illustrative). This localized matrix enables precise mathematical classification of user movement.
-*   **TED Benchmark Profiling Set:** A comprehensive profiling exercise capturing physical cadence metrics across a diverse array of 15 to 20 acclaimed TED Talks (e.g., assessing dominant structural styles versus conversational narration). These profiles yield targeted standard deviations for variables such as gestures-per-minute and postural stability, establishing the core target engagement scoring thresholds.
+*   **Proprietary Gesture Classification Database:** A specialized internal dataset that maps 33 three-dimensional pose landmarks into normalized physical features across target gestural classes (open-palm, pointing, fidgeting, resting, illustrative). This localized matrix enables precise mathematical classification of user movement without requiring cloud-side vision processing.
+*   **User Context Library (Multimodal Ingestion):** Dynamic data extracted from user-uploaded presentation materials (PDFs, slides, images). Utilizing Gemini Flash's multimodal capabilities, the system ingests these documents to provide the Content Expert agent with specific, high-fidelity context regarding the user's pitch.
+*   **Real-time Biometric Telemetry:** High-frequency data streams encompassing raw audio PCM and MediaPipe-generated landmark coordinates (face, hands, pose). This continuous flow serves as the primary data source for the real-time "Mixture of Experts" evaluation pipeline.
+*   **Historical Session Intelligence:** Longitudinal performance data and generated "Improvement Tasks" stored in Cloud Firestore. This historical context allows the agent to track progress across multiple practice sessions and provide personalized, incremental coaching.
+
 
 ## Findings and Learnings
 
@@ -233,6 +236,7 @@ The server acts as the primary gRPC orchestration proxy between the client and G
     ```env
     GOOGLE_GENAI_API_KEY=your_vertex_ai_key
     FIREBASE_SERVICE_ACCOUNT_JSON=path_to_service_account.json
+    FIREBASE_PROJECT_ID=...
     ```
 4.  **Operational Startup:** `npm run dev`
 

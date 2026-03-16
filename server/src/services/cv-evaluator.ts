@@ -31,7 +31,7 @@ export interface OrchestratorSignal {
     message: string;
 }
 
-// ── Thresholds (calibrated to TED benchmark ranges) ─────────────────────────
+// ── Thresholds (calibrated to internal benchmark ranges) ───────────────────
 
 const EYE_CONTACT_CRITICAL = 30;
 const EYE_CONTACT_WARNING = 50;
@@ -42,7 +42,7 @@ const GESTURE_HIGH_WARN = 50;   // gestures/min — too fidgety
 const GESTURE_ENERGY_HIGH = 2; // Increased sensitivity
 const GESTURE_VARIETY_LOW = 3; 
 const GESTURE_MIN_FOR_VARIETY = 10;
-const GESTURE_TED_TARGET = 26;  // TED average
+const GESTURE_TARGET_RPM = 26;  // Calibrated target average
 
 const POSTURE_BAD_THRESHOLD_MS = 2000; // alert after 2s of bad posture
 const SHRIMP_BAD_THRESHOLD_MS = 2500;  // alert after 2.5s of rounding/shrimping
