@@ -25,6 +25,8 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
         };
         return next();
     } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[auth] verifyIdToken failed:', message);
         return res.status(401).json({ error: 'Invalid auth token' });
     }
 }
