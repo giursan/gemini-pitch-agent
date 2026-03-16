@@ -264,6 +264,7 @@ Once both services are active, navigate to `http://localhost:3000`. The interfac
 ## Deliverables
 
 *   **Blog Post:** [Building Aura: Our Journey Crafting a Premium AI Pitch Mentor](https://dev.to/giursan/building-aura-our-journey-crafting-a-premium-ai-pitch-mentor-4b07)
+*   **Demo Video:** 
 *   **Our GDG Profiles:** 
     - [Sandra's Profile](https://g.dev/giursan)
     - [Silvio's Profile]
