@@ -136,7 +136,7 @@ export function useGestureRecognizer(
                 const ERROR_BACKOFF_MS = 2000;
 
                 const processFrame = () => {
-                    if (cancelled) return;
+                    if (cancelled || !enabled) return;
 
                     const now = performance.now();
 
@@ -288,16 +288,7 @@ export function useGestureRecognizer(
         };
     }, [videoRef, enabled]);
 
-    useEffect(() => {
-        if (!enabled) {
-            countsRef.current = {};
-            totalFramesRef.current = 0;
-            openFramesRef.current = 0;
-            closedFramesRef.current = 0;
-            setMetrics(DEFAULT_METRICS);
-            handResultsRef.current = [];
-        }
-    }, [enabled]);
+    // Removed auto-reset when disabled to allow metrics freezing during pause
 
     return { metrics, handResultsRef };
 }

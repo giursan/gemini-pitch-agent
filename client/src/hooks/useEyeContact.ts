@@ -23,7 +23,8 @@ export function useEyeContact(
     /** Optional ref to hand landmark results from useGestureRecognizer, drawn in the pose pass */
     handResultsRef?: React.RefObject<HandResult[]>,
     /** Optional calibrated baseline to render accurate posture diagnostic colors */
-    baseline: PostureBaseline | null = null
+    baseline: PostureBaseline | null = null,
+    enabled: boolean = true,
 ) {
     const [eyeContactScore, setEyeContactScore] = useState<number>(100);
     const faceMeshRef = useRef<FaceMeshType | null>(null);
@@ -103,6 +104,7 @@ export function useEyeContact(
         const FACE_SIZE_TOLERANCE = 0.30; // Skip if face is <30% of average
 
         const onFaceResults = (results: Results) => {
+            if (!enabled) return;
             // --- DRAWING LOGIC ---
             if (canvasRef?.current && videoElement) {
                 const canvasCtx = canvasRef.current.getContext('2d');
@@ -234,6 +236,7 @@ export function useEyeContact(
         };
 
         const onPoseResults = (results: any) => {
+            if (!enabled) return;
             // Store pose landmarks in ref for downstream analysis
             if (results.poseLandmarks) {
                 landmarksRef.current = {
@@ -450,7 +453,7 @@ export function useEyeContact(
             try { currentPose?.close(); } catch (e) { /* ignore Wasm collision abort */ }
         };
 
-    }, [videoRef, canvasRef, videoMode, handResultsRef]);
+    }, [videoRef, canvasRef, videoMode, handResultsRef, enabled]);
 
     return { eyeContactScore, landmarksRef };
 }

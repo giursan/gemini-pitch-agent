@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { CheckCircle2, Ruler, ShieldCheck, Timer, UserCheck, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Ruler, ShieldCheck, Timer, UserCheck, AlertCircle, X } from 'lucide-react';
 import { BodyLandmarks } from '../hooks/useEyeContact';
 import { GestureMetrics } from '../hooks/useGestureRecognizer';
 import { LM, PostureBaseline, angleBetween } from '../hooks/useBodyLanguageAnalysis';
@@ -137,11 +137,22 @@ export default function PostureCalibrationOverlay({
         <div className="fixed inset-0 z-[100] bg-black/40 flex flex-col items-center justify-center p-8 animate-in fade-in duration-500">
             {/* Header */}
             <div className="absolute top-12 flex flex-col items-center">
-                <div className="w-16 h-16 rounded-2xl bg-google-blue/20 flex items-center justify-center mb-4">
-                    <UserCheck className="w-8 h-8 text-google-blue" />
+                <div className="w-16 h-16 rounded-3xl bg-white/10 backdrop-blur-md flex items-center justify-center mb-6">
+                    <UserCheck className="w-8 h-8 text-white" />
                 </div>
-                <h2 className="text-4xl font-bold text-white tracking-tight">Postural Stance Calibration</h2>
+                <h2 className="text-4xl font-black text-white tracking-tight leading-tight">
+                    Postural Stance Calibration
+                </h2>
             </div>
+
+            {/* Top-Right Close Button */}
+            <button 
+                onClick={onCancel}
+                className="absolute top-8 right-8 w-12 h-12 flex items-center justify-center bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-all active:scale-95 group"
+                title="Cancel Calibration"
+            >
+                <X className="w-6 h-6 group-hover:rotate-90 transition-transform" />
+            </button>
 
             {/* Main Guidance UI */}
             <div className="flex-1 flex flex-col items-center justify-center max-w-2xl w-full text-center">
@@ -154,7 +165,7 @@ export default function PostureCalibrationOverlay({
                             ) : (
                                 <Ruler className="w-20 h-20 text-neutral-600 mx-auto mb-6 animate-pulse" />
                             )}
-                            <h3 className="text-4xl font-bold text-white mb-6">
+                            <h3 className="text-4xl font-black text-white mb-6 tracking-tight">
                                 {isVisible ? "Position Perfect" : "Full Body Check"}
                             </h3>
                             <p className="text-neutral-300 text-3xl font-medium leading-relaxed">
@@ -170,7 +181,7 @@ export default function PostureCalibrationOverlay({
                     <div className="space-y-8 animate-in zoom-in-95 duration-500">
                         <div className="p-10 rounded-3xl bg-google-blue/10 border-2 border-google-blue/30 max-w-3xl mx-auto">
                             <ShieldCheck className="w-24 h-24 text-google-blue mx-auto mb-8" />
-                            <h3 className="text-4xl font-bold text-white mb-6">Set Your Best Stance</h3>
+                            <h3 className="text-4xl font-black text-white mb-6 tracking-tight">Set Your Best Stance</h3>
                             <p className="text-neutral-300 text-3xl font-medium leading-relaxed">
                                 Stand as tall as possible. Pull your shoulders back and lift your chin slightly.
                                 <br /><br />
@@ -212,8 +223,9 @@ export default function PostureCalibrationOverlay({
             <div className="absolute bottom-12">
                 <button
                     onClick={onCancel}
-                    className="px-6 py-3 rounded-xl border border-red-500/10 text-red-500 hover:text-red-500 hover:bg-red-500/5 transition-all text-sm font-bold uppercase tracking-widest"
+                    className="h-12 flex items-center gap-3 px-8 bg-google-red/10 text-google-red border border-google-red/20 rounded-full text-[10px] font-black hover:bg-google-red/20 active:scale-[0.98] transition-all uppercase tracking-[0.2em]"
                 >
+                    <X className="w-4 h-4" />
                     Cancel Calibration
                 </button>
             </div>

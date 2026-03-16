@@ -100,8 +100,8 @@ export default function HistoryPage() {
     return (
         <div className="min-h-screen bg-neutral-50 flex flex-col font-sans selection:bg-google-blue/10">
             {/* Local Header */}
-            <header className="px-8 py-5 flex items-center justify-between bg-white border-b border-neutral-200">
-                <h1 className="text-xl font-bold text-neutral-900 leading-none">
+            <header className="px-8 h-24 flex items-center justify-between bg-white border-b border-neutral-200 shrink-0">
+                <h1 className="text-3xl font-black text-neutral-900 tracking-tight leading-tight">
                     Session History
                 </h1>
                 <Link

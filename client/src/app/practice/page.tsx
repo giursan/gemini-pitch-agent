@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import Webcam from 'react-webcam';
-import { Eye, Mic, TrendingUp, Pause, Hand, Maximize, Minimize, ActivitySquare, Terminal, Send, MessageSquare, Play, Square } from 'lucide-react';
+import { Eye, Mic, TrendingUp, Pause, Hand, Maximize, Minimize, ActivitySquare, Terminal, Send, MessageSquare, Play, Square, PanelRightClose, LayoutDashboard } from 'lucide-react';
 import { useEyeContact } from '../../hooks/useEyeContact';
 import { useBodyLanguageAnalysis, type PostureBaseline } from '../../hooks/useBodyLanguageAnalysis';
 import { useGestureRecognizer } from '../../hooks/useGestureRecognizer';
@@ -60,6 +60,7 @@ function Home() {
   const [posturalBaseline, setPosturalBaseline] = useState<PostureBaseline | null>(null);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [showSkeleton, setShowSkeleton] = useState(true);
+  const [showAnalytics, setShowAnalytics] = useState(true);
 
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'gemini', text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -185,11 +186,12 @@ function Home() {
   }, []);
 
   // CV Hooks (run while session is active)
-  const { metrics: gestureMetrics, handResultsRef: gestureHandResultsRef } = useGestureRecognizer(videoElementRef, enableGestures && enabledAgents.gestures && isVideoReady);
+  const isCVActive = (sessionState === 'recording' || isCalibrating) && isVideoReady;
+  const { metrics: gestureMetrics, handResultsRef: gestureHandResultsRef } = useGestureRecognizer(videoElementRef, isCVActive && enabledAgents.gestures && enableGestures);
   const { eyeContactScore: realTimeEyeContact, landmarksRef } = useEyeContact(
-    isVideoReady ? videoElementRef : { current: null }, overlayCanvasRef, false, enabledAgents, gestureHandResultsRef, posturalBaseline
+    isVideoReady ? videoElementRef : { current: null }, overlayCanvasRef, false, enabledAgents, gestureHandResultsRef, posturalBaseline, isCVActive && enabledAgents.eyeContact
   );
-  const { metrics: bodyMetrics } = useBodyLanguageAnalysis(landmarksRef, isActive || isCalibrating, posturalBaseline);
+  const { metrics: bodyMetrics } = useBodyLanguageAnalysis(landmarksRef, sessionState === 'recording' || isCalibrating, posturalBaseline);
 
   // Update ref every render (after hooks so variables are defined)
   latestTelemetryRef.current = {
@@ -213,7 +215,7 @@ function Home() {
 
   // Stagger GestureRecognizer by 3 seconds after session starts to prevent WASM load crash
   useEffect(() => {
-    if (isActive || isCalibrating) {
+    if (sessionState === 'recording' || isCalibrating) {
       const t = setTimeout(() => setEnableGestures(true), isCalibrating ? 1000 : 5000);
       return () => clearTimeout(t);
     } else {
@@ -644,9 +646,9 @@ function Home() {
   return (
     <div className="min-h-[100vh] bg-neutral-50 flex flex-col font-sans selection:bg-google-blue/10">
       {/* Local Header */}
-      <header className="px-8 py-5 flex items-center justify-between bg-white border-b border-neutral-200">
+      <header className="px-8 h-24 flex items-center justify-between bg-white border-b border-neutral-200 shrink-0">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold text-neutral-900 leading-none">
+          <h1 className="text-3xl font-black text-neutral-900 tracking-tight leading-tight">
             Live Practice
           </h1>
           {projectTitle && (
@@ -657,29 +659,22 @@ function Home() {
           )}
         </div>
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3 mr-4">
-            <button
-              onClick={() => {
-                setIsCalibrating(true);
-                setIsFullscreen(true);
-              }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${posturalBaseline ? 'bg-google-green/10 text-google-green border border-google-green/20' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'}`}
-            >
-              <UserCheck className="w-4 h-4" />
-              {posturalBaseline ? 'RE-CALIBRATE' : 'CALIBRATE POSTURE'}
-            </button>
-          </div>
           <SessionControls
             state={sessionState}
             onStart={handleStart}
             onPause={handlePause}
             onResume={handleResume}
             onEnd={handleEnd}
+            onCalibrate={() => {
+              setIsCalibrating(true);
+              setIsFullscreen(true);
+            }}
+            hasBaseline={!!posturalBaseline}
           />
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row p-8 gap-8 max-w-7xl mx-auto w-full animate-in fade-in duration-700">
+      <main className="flex-1 flex flex-col lg:flex-row p-8 gap-8 max-w-[1600px] mx-auto w-full animate-in fade-in duration-700">
         {/* Left Section: Video & Active Insights */}
         <section className={`flex-1 flex flex-col gap-6 w-full ${isFullscreen ? 'fixed inset-0 z-50 !p-0 bg-black' : ''}`} ref={fullscreenContainerRef}>
           <div className={`relative overflow-hidden bg-black flex items-center justify-center group ${isFullscreen ? 'w-full h-full rounded-none' : 'rounded-lg border border-neutral-200 aspect-video shadow-sm'}`}>
@@ -704,13 +699,14 @@ function Home() {
                 <button
                   onClick={() => setShowSkeleton(!showSkeleton)}
                   className={`p-2 rounded backdrop-blur-md transition-all ${showSkeleton ? 'bg-google-blue text-white shadow-lg shadow-google-blue/20' : 'bg-black/50 text-white/70 hover:bg-black/70'}`}
-                  title={showSkeleton ? "Hide Analysis Skeleton" : "Show Analysis Skeleton"}
+                  title="remove tracking"
                 >
                   <ActivitySquare className={`w-5 h-5 ${showSkeleton ? 'animate-pulse' : ''}`} />
                 </button>
                 <button
                   onClick={toggleFullscreen}
                   className="p-2 bg-black/50 hover:bg-black/70 rounded text-white backdrop-blur-md transition-colors"
+                  title="full screen"
                 >
                   {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
                 </button>
@@ -719,36 +715,30 @@ function Home() {
 
             {/* Floating Fullscreen Controls */}
             {isFullscreen && isActive && (
-              <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 px-6 py-4 bg-black/40 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl animate-in slide-in-from-bottom-10 duration-500 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-50 flex items-center gap-6 px-6 py-4 bg-black/40 backdrop-blur-2xl border border-white/10 rounded-full shadow-2xl animate-in slide-in-from-bottom-10 duration-500 opacity-0 group-hover:opacity-100 transition-opacity">
                 {sessionState === 'recording' ? (
                   <button
                     onClick={handlePause}
-                    className="flex items-center gap-2.5 px-6 py-3 bg-white text-neutral-900 rounded-xl text-sm font-bold shadow-lg hover:scale-105 transition-all active:scale-95"
+                    className="w-14 h-14 flex items-center justify-center rounded-full bg-white text-neutral-900 hover:scale-110 transition-all active:scale-90"
+                    title="Pause Session"
                   >
-                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center">
-                      <Pause className="w-4 h-4 fill-neutral-900" />
-                    </div>
-                    PAUSE SESSION
+                    <Pause className="w-6 h-6 fill-neutral-900" />
                   </button>
                 ) : (
                   <button
                     onClick={handleResume}
-                    className="flex items-center gap-2.5 px-6 py-3 bg-google-blue text-white rounded-xl text-sm font-bold shadow-lg shadow-google-blue/30 hover:scale-105 transition-all active:scale-95"
+                    className="w-14 h-14 flex items-center justify-center rounded-full bg-neutral-900 text-white border border-white/20 hover:scale-110 transition-all active:scale-90"
+                    title="Resume Session"
                   >
-                    <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-                      <Play className="w-4 h-4 fill-white" />
-                    </div>
-                    RESUME SESSION
+                    <Play className="w-6 h-6 fill-white translate-x-0.5" />
                   </button>
                 )}
                 <button
                   onClick={handleEnd}
-                  className="flex items-center gap-2.5 px-6 py-3 bg-google-red text-white rounded-xl text-sm font-bold shadow-lg shadow-google-red/30 hover:scale-105 transition-all active:scale-95"
+                  className="w-14 h-14 flex items-center justify-center rounded-full bg-google-red text-white hover:scale-110 transition-all active:scale-90"
+                  title="Stop & Analyze"
                 >
-                  <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-                    <Square className="w-4 h-4 fill-white" />
-                  </div>
-                  STOP & ANALYZE
+                  <Square className="w-6 h-6 fill-white" />
                 </button>
               </div>
             )}
@@ -763,8 +753,8 @@ function Home() {
                       LIVE FEEDBACK ACTIVE
                     </span>
                   </div>
-                  <div className="px-4 py-2 bg-google-blue/10 backdrop-blur-xl rounded-lg border border-neutral-200 flex items-center gap-2">
-                    <span className="text-[11px] font-bold tracking-wider text-google-blue">{Object.values(enabledAgents).filter(Boolean).length} AGENT{Object.values(enabledAgents).filter(Boolean).length !== 1 ? 'S' : ''} MONITORING</span>
+                  <div className="px-4 py-2 bg-white/90 backdrop-blur-xl rounded-lg shadow-sm border border-neutral-200 flex items-center gap-2">
+                    <span className="text-[11px] font-black tracking-wider text-google-blue">{Object.values(enabledAgents).filter(Boolean).length} AGENT{Object.values(enabledAgents).filter(Boolean).length !== 1 ? 'S' : ''} MONITORING</span>
                   </div>
                 </>
               )}
@@ -808,6 +798,17 @@ function Home() {
             {/* Feedback Notifications */}
             <FeedbackOverlay alerts={alerts} onDismiss={handleDismissAlert} />
 
+            {/* Show Analytics Toggle (when hidden) */}
+            {!isFullscreen && !showAnalytics && (
+              <button
+                onClick={() => setShowAnalytics(true)}
+                className="absolute top-6 right-6 z-40 flex items-center gap-2 px-4 py-2 bg-white/90 backdrop-blur-md border border-neutral-200 rounded-lg shadow-sm text-neutral-600 hover:text-neutral-900 hover:bg-white transition-all animate-in slide-in-from-right-5 duration-300 font-bold text-[11px] tracking-wider uppercase"
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                SHOW ANALYTICS
+              </button>
+            )}
+
             <ProjectSelectionModal
               isOpen={isProjectModalOpen}
               onClose={() => setIsProjectModalOpen(false)}
@@ -845,54 +846,67 @@ function Home() {
             </div>
           )}
 
-          {/* Moved Intelligence Dashboard here */}
-          {!isFullscreen && (
-            <div className="bg-white shadow-sm border border-neutral-200 p-7 rounded-lg mt-2 w-full">
-              <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500 mb-8 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-google-blue" />
-                Intelligence Dashboard
-              </h2>
+        </section>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-                {/* Visual Performance Section — shown when any visual agent is active */}
+        {/* Right Section: Session Analytics */}
+        {!isFullscreen && showAnalytics && (
+          <aside className="w-full lg:w-[400px] flex flex-col gap-6 animate-in slide-in-from-right-10 duration-700">
+            <div className="bg-white shadow-sm border border-neutral-200 rounded-2xl overflow-hidden flex flex-col h-full">
+              <div className="p-6 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50 group/header">
+                <h2 className="text-xl font-black text-neutral-900 tracking-tight leading-tight">
+                  Session Analytics
+                </h2>
+                <button 
+                  onClick={() => setShowAnalytics(false)}
+                  className="p-2 rounded-lg hover:bg-neutral-200 text-neutral-400 hover:text-neutral-600 transition-all"
+                  title="Hide Analytics"
+                >
+                  <PanelRightClose className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-10 custom-scrollbar">
+                {/* Overall Score - High Visibility at top */}
+                {enabledAgents.speech && (
+                  <section className="flex items-center justify-between p-6 bg-neutral-900 rounded-2xl text-white relative overflow-hidden group">
+                    <div>
+                      <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40 mb-1">Session PR</h3>
+                      <h4 className="text-xl font-black tracking-tight">Overall Rating</h4>
+                    </div>
+                    <div className="relative w-20 h-20 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90">
+                        <circle cx="40" cy="40" r="35" stroke="currentColor" strokeWidth="4" fill="transparent" className="text-white/10" />
+                        <circle
+                          cx="40" cy="40" r="35" stroke="currentColor" strokeWidth="5" fill="transparent"
+                          strokeDasharray={219.9}
+                          strokeDashoffset={219.9 - (219.9 * bodyMetrics.overallScore) / 100}
+                          className={`transition-all duration-1000 ${bodyMetrics.overallScore >= 70 ? 'text-google-green' : bodyMetrics.overallScore >= 40 ? 'text-google-blue' : 'text-google-red'}`}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-2xl font-black">{bodyMetrics.overallScore}</span>
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                {/* Visual Performance Section */}
                 {(enabledAgents.eyeContact || enabledAgents.posture || enabledAgents.gestures) && (
                   <section>
-                    <SectionHeader icon={<Eye className="w-5 h-5" />} title="Visual Presence" subtitle="Body & Facial Analysis" />
-                    <div className="space-y-4 pt-2">
+                    <SectionHeader icon={<Eye className="w-5 h-5 text-neutral-900" />} title="Visual Presence" subtitle="Real-time Body Language" />
+                    <div className="space-y-3.5 pt-2">
                       {enabledAgents.eyeContact && <MetricRow label="Eye Contact" value={`${realTimeEyeContact}%`} good={realTimeEyeContact > 70} />}
                       {enabledAgents.posture && (
                         <>
                           <MetricRow label="Posture Status" value={bodyMetrics.isGoodPosture ? 'Upright' : 'Slouching'} good={bodyMetrics.isGoodPosture} />
-                          <MetricRow label="Posture Angle" value={`${bodyMetrics.postureAngle}°`} good={bodyMetrics.isGoodPosture} />
-                          <MetricRow label="Shoulder Symmetry" value={`${Math.round(bodyMetrics.shoulderSymmetry * 100)}%`} good={bodyMetrics.shoulderSymmetry > 0.8} />
-                          <MetricRow label="Stability" value={`${Math.round(bodyMetrics.bodyStability * 100)}%`} good={bodyMetrics.bodyStability > 0.7} />
+                          <MetricRow label="Neck Stability" value={`${Math.round(bodyMetrics.neckStability * 100)}%`} good={bodyMetrics.neckStability > 0.98} />
+                          <MetricRow label="Shoulder Sweep" value={`${Math.round(bodyMetrics.shoulderExpansion * 100)}%`} good={bodyMetrics.shoulderExpansion > 0.9} />
                         </>
                       )}
-                      {enabledAgents.eyeContact && <MetricRow label="Smile Intensity" value={`${Math.round(bodyMetrics.smileScore * 100)}%`} good={bodyMetrics.smileScore > 0.3} />}
-                      {posturalBaseline && enabledAgents.posture && (
-                        <>
-                          <MetricRow
-                            label="Neck Posture (Live / Calibrated)"
-                            value={`${bodyMetrics.currentNeckRatio.toFixed(2)} / ${posturalBaseline.neckRatio.toFixed(2)}`}
-                            good={bodyMetrics.neckStability > 0.98}
-                          />
-                          <MetricRow
-                            label="Shoulder Sweep (Live / Calibrated)"
-                            value={`${bodyMetrics.currentBreadthRatio.toFixed(2)} / ${posturalBaseline.breadthRatio.toFixed(2)}`}
-                            good={bodyMetrics.shoulderExpansion > 0.9}
-                          />
-                        </>
-                      )}
+                      <MetricRow label="Smile Intensity" value={`${Math.round(bodyMetrics.smileScore * 100)}%`} good={bodyMetrics.smileScore > 0.3} />
                       {enabledAgents.gestures && (
                         <>
-                          <MetricRow
-                            label="Active Gestures"
-                            value={gestureMetrics?.currentGestures?.length > 0
-                              ? gestureMetrics.currentGestures.map(g => g.gesture.replace('_', ' ')).join(', ')
-                              : '--'}
-                            good={true}
-                            color="text-google-purple"
-                          />
                           <MetricRow
                             label="Gesture Variety"
                             value={`${Object.keys(gestureMetrics?.gestureCounts || {}).length} types`}
@@ -905,91 +919,64 @@ function Home() {
                             good={(gestureMetrics?.velocity || 0) < 70}
                             color="text-google-purple"
                           />
-                          <MetricRow
-                            label="Hand Visibility"
-                            value={(bodyMetrics?.handsHidden || gestureMetrics?.handsDetected === 0) ? 'HIDDEN' : 'Visible'}
-                            good={!bodyMetrics?.handsHidden && (gestureMetrics?.handsDetected || 0) > 0}
-                          />
                         </>
                       )}
                     </div>
                   </section>
                 )}
 
-                {/* Verbal Performance Section — shown when speech agent is active */}
+                {/* Verbal Performance Section */}
                 {enabledAgents.speech && (
-                  <section className="flex flex-col">
-                    <SectionHeader icon={<Mic className="w-5 h-5" />} title="Verbal Performance" subtitle="Voice & Content Analysis" />
-                    <div className="space-y-4 pt-2">
-                      <MetricRow label="Pacing" value={sessionMetrics.pacing > 0 ? `${sessionMetrics.pacing} WPM` : '--'} good={sessionMetrics.pacing > 120 && sessionMetrics.pacing < 160} />
-                      <MetricRow label="Filler Frequency" value={`${sessionMetrics.filler}/min`} good={sessionMetrics.filler < 5} />
-                      <MetricRow label="Total Fillers Detect" value={sessionMetrics.totalFillers} good={sessionMetrics.totalFillers < 10} />
+                  <section>
+                    <SectionHeader icon={<Mic className="w-5 h-5 text-neutral-900" />} title="Vocal Metrics" subtitle="Delivery & Fluency" />
+                    <div className="space-y-3.5 pt-2">
+                      <MetricRow label="Pacing (WPM)" value={sessionMetrics.pacing > 0 ? `${sessionMetrics.pacing}` : '--'} good={sessionMetrics.pacing > 120 && sessionMetrics.pacing < 160} />
+                      <MetricRow label="Filler Words" value={`${sessionMetrics.totalFillers} total`} good={sessionMetrics.totalFillers < 10} />
                       {sessionMetrics.fillerWords.length > 0 && (
-                        <div className="pt-1">
-                          <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider mb-2">Filler Breakdown</p>
+                        <div className="pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
                           <div className="flex flex-wrap gap-1.5">
                             {Array.from(new Set(sessionMetrics.fillerWords)).map((word, i) => (
-                              <span key={i} className="px-2 py-0.5 bg-neutral-100 border border-neutral-200 rounded text-[9px] font-mono text-neutral-600">
-                                {word} <span className="text-google-red font-bold">x{sessionMetrics.fillerWords.filter(w => w === word).length}</span>
+                              <span key={i} className="px-2 py-0.5 bg-neutral-50 border border-neutral-200 rounded text-[9px] font-mono text-neutral-500">
+                                {word} <span className="text-google-red font-black">x{sessionMetrics.fillerWords.filter(w => w === word).length}</span>
                               </span>
                             ))}
                           </div>
                         </div>
                       )}
-                      <MetricRow label="Delivery Grade" value={sessionMetrics.deliveryScore > 0 ? `${sessionMetrics.deliveryScore}/100` : '--'} good={sessionMetrics.deliveryScore >= 70} />
-                      <MetricRow label="Content Depth" value={sessionMetrics.contentScore > 0 ? `${sessionMetrics.contentScore}/100` : '--'} good={sessionMetrics.contentScore >= 70} />
-                    </div>
-
-                    {/* Overall Score Circle */}
-                    <div className="mt-auto pt-8 flex items-center justify-between border-t border-neutral-100">
-                      <div>
-                        <h4 className="text-sm font-bold text-neutral-900">Overall Rating</h4>
-                        <p className="text-[10px] uppercase text-neutral-400 font-bold mt-1 tracking-wider">Aura Session PR</p>
-                      </div>
-                      <div className="relative w-24 h-24 flex items-center justify-center">
-                        <svg className="w-full h-full transform -rotate-90">
-                          <circle cx="48" cy="48" r="42" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-neutral-100" />
-                          <circle
-                            cx="48" cy="48" r="42" stroke="currentColor" strokeWidth="6" fill="transparent"
-                            strokeDasharray={263.89}
-                            strokeDashoffset={263.89 - (263.89 * bodyMetrics.overallScore) / 100}
-                            className={`transition-all duration-1000 ${bodyMetrics.overallScore >= 70 ? 'text-google-green' : bodyMetrics.overallScore >= 40 ? 'text-google-blue' : 'text-google-red'}`}
-                          />
-                        </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                          <span className="text-2xl font-bold text-neutral-900">{bodyMetrics.overallScore}</span>
-                        </div>
-                      </div>
                     </div>
                   </section>
                 )}
 
                 {/* Live Transcript Section */}
                 {enabledAgents.speech && (
-                  <section className="flex flex-col h-full">
-                    <SectionHeader icon={<Terminal className="w-5 h-5" />} title="Live Transcript" subtitle="Gemini Voice Stream" />
-                    <div className="mt-4 p-5 bg-neutral-900 rounded-xl border border-white/10 shadow-inner relative overflow-hidden group flex-1">
-                      {/* Decorative background pulse */}
-                      <div className="absolute top-0 right-0 p-3">
-                        <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-google-green animate-pulse' : 'bg-neutral-600'}`} />
+                  <section>
+                    <SectionHeader icon={<Terminal className="w-5 h-5 text-neutral-900" />} title="Live Transcript" subtitle="Real-time Stream" />
+                    <div className="mt-4 p-5 bg-neutral-50 rounded-2xl border border-neutral-200 min-h-[160px] max-h-[300px] overflow-y-auto custom-scrollbar group relative">
+                      <div className="absolute top-3 right-3">
+                        <div className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-google-green animate-pulse' : 'bg-neutral-300'}`} />
                       </div>
-
-                      <div className="h-full overflow-y-auto custom-scrollbar">
-                        <p className="text-sm font-mono text-google-green/90 leading-relaxed selection:bg-google-green/20">
-                          <span className="text-google-green/40 mr-2">$</span>
-                          {liveTranscript || (isActive ? 'Listening for audio input...' : 'Start session to begin transcription.')}
-                          {isActive && <span className="inline-block w-2 h-4 bg-google-green/50 ml-1 animate-pulse" />}
-                        </p>
-                      </div>
+                      <p className="text-xs font-mono text-neutral-600 leading-relaxed">
+                        <span className="text-neutral-300 mr-2">$</span>
+                        {liveTranscript || (isActive ? 'System ready. Listening...' : 'Session idle.')}
+                        {isActive && <span className="inline-block w-1.5 h-3 bg-google-green/40 ml-1 animate-pulse" />}
+                      </p>
                     </div>
                   </section>
                 )}
               </div>
 
-
+              {/* Sidebar footer branding */}
+              <div className="p-6 bg-neutral-50/50 border-t border-neutral-100 flex items-center justify-end">
+                <div className="flex gap-1">
+                  <div className="w-1 h-1 rounded-full bg-google-blue" />
+                  <div className="w-1 h-1 rounded-full bg-google-red" />
+                  <div className="w-1 h-1 rounded-full bg-google-yellow" />
+                  <div className="w-1 h-1 rounded-full bg-google-green" />
+                </div>
+              </div>
             </div>
-          )}
-        </section>
+          </aside>
+        )}
       </main>
 
       {isCalibrating && (

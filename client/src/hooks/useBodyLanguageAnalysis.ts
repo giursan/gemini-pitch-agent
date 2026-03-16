@@ -152,6 +152,7 @@ export function useBodyLanguageAnalysis(
         const GESTURE_VELOCITY_THRESHOLD = 0.03; // Normalized coordinate units per frame
 
         const interval = setInterval(() => {
+            if (!enabled) return;
             const lm = landmarksRef.current;
             if (!lm) return;
 
@@ -409,16 +410,7 @@ export function useBodyLanguageAnalysis(
     }, [landmarksRef, enabled]);
 
     // Reset counters when disabled
-    useEffect(() => {
-        if (!enabled) {
-            samplesRef.current = [];
-            gestureCountRef.current = 0;
-            lastWristPosRef.current = null;
-            handVisibleCountRef.current = 0;
-            totalFrameCountRef.current = 0;
-            setMetrics(DEFAULT_METRICS);
-        }
-    }, [enabled]);
+    // Removed auto-reset when disabled to allow metrics freezing during pause
 
     return { metrics, benchmarks: TED_BENCHMARKS };
 }
