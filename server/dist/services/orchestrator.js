@@ -24,6 +24,22 @@ Rules:
 - If they ask about something you can see in the data, quote the numbers
 - If they ask for strategy advice, be specific to their content/topic
 `;
+const SHARK_COACH_SYSTEM_PROMPT = `You are the Shark, a brutal but world-class presentation coach. You are watching a LIVE transcript of a presenter practicing their pitch.
+
+YOUR ROLE:
+- Interrupt the speaker if they are doing poorly (too many filler words, monotone, slow pacing, weak arguments).
+- Be extremely direct, critical, and authoritative. 
+- You are like a high-stakes investor. If they waste your time, tell them.
+- If they are doing great, stay SILENT (respond with "NO_ROAST").
+
+RULES:
+- Your response MUST be EXACTLY ONE SENTENCE. No more.
+- Do NOT use fragments. Use full, powerful sentences.
+- Be brutal but constructive.
+- If you don't have something critical to say, return ONLY the exact text "NO_ROAST".
+
+CONTEXT:
+`;
 // ── Orchestrator ────────────────────────────────────────────────────────────────
 class Orchestrator {
     deliveryAgent;
@@ -44,12 +60,16 @@ class Orchestrator {
     latestVocalVariety = 0;
     latestContentScore = 0;
     latestDeliveryScore = 0;
+    totalFillers = 0;
+    allFillerWords = [];
+    sessionStartTime = Date.now();
     // Rate limiting
     static MIN_ALERT_INTERVAL_MS = 8000; // max 1 alert per 8s
     static CONTENT_ANALYSIS_INTERVAL_MS = 20000; // every 20s
     static METRICS_EMIT_INTERVAL_MS = 10000; // every 10s
     metricsInterval = null;
     transcriptLength = 0;
+    lastSharkRoastTs = 0;
     // Signal Priorities (higher = more important for live feedback)
     static SIGNAL_PRIORITIES = {
         'critical': 100,
@@ -68,6 +88,7 @@ class Orchestrator {
         // Initialize AI client for coach chat
         this.chatAi = new genai_1.GoogleGenAI({
             apiKey: process.env.GOOGLE_GENAI_API_KEY,
+            httpOptions: { apiVersion: 'v1beta' }
         });
         // Initialize sub-agents
         this.deliveryAgent = new adk_live_session_1.DeliveryAgent(config.sessionId, config.feedbackMode, config.agents.speech);
@@ -174,10 +195,15 @@ class Orchestrator {
         const prompt = `${COACH_CHAT_SYSTEM_PROMPT}\n\n${contextBlock}${this.config.tasksContext ? '\n\n' + this.config.tasksContext : ''}\n\nCHAT HISTORY:\n${chatContext}\n\nRespond to the user's latest message. Be specific and reference their actual data.`;
         try {
             const response = await this.chatAi.models.generateContent({
-                model: 'gemini-2.5-flash',
+                model: 'gemini-flash-latest',
                 contents: prompt,
             });
-            const reply = response.text?.trim() || 'Sorry, I couldn\'t generate a response.';
+            // Manually extract text parts to avoid the 'thoughtSignature' warning clutter
+            const reply = response.candidates?.[0]?.content?.parts
+                ?.map(p => p.text)
+                .filter(Boolean)
+                .join('')
+                .trim() || 'Sorry, I couldn\'t generate a response.';
             this.chatHistory.push({ role: 'coach', text: reply });
             this.sendToClient({
                 type: 'chat_reply',
@@ -209,17 +235,24 @@ class Orchestrator {
         // Update metrics
         this.latestPacing = report.pacing;
         this.latestFiller = report.filler;
+        this.totalFillers += report.filler;
+        if (report.fillerWords && report.fillerWords.length > 0) {
+            this.allFillerWords = [...this.allFillerWords, ...report.fillerWords];
+        }
         if (report.vocalVariety !== undefined) {
             this.latestVocalVariety = report.vocalVariety;
         }
         // Calculate delivery score from components
+        const elapsedMins = (Date.now() - this.sessionStartTime) / 60000;
+        const currentFillerRate = elapsedMins > 0.1 ? (this.totalFillers / elapsedMins) : 0;
         const pacingScore = scorePacing(report.pacing);
-        const fillerScore = scoreFillerRate(report.filler);
+        const fillerScore = scoreFillerRate(currentFillerRate);
         const vocalScore = report.vocalVariety ?? 50;
         this.latestDeliveryScore = Math.round((pacingScore + fillerScore + vocalScore) / 3);
         if (report.transcript) {
             this.transcriptBuffer += ' ' + report.transcript;
             this.transcriptLength += report.transcript.length;
+            this.sendToClient({ type: 'transcript', text: report.transcript });
             // Log transcript event
             this.deliveryAgent.logEvent('transcript', {
                 speaker: 'user',
@@ -266,14 +299,56 @@ class Orchestrator {
             for (const signal of signals) {
                 this.processSignal(signal);
             }
-            // In shark mode, inject coaching directives for content issues
-            if (this.config.feedbackMode === 'shark' && assessment.suggestions.length > 0) {
-                const directive = `The speaker's content needs work: ${assessment.suggestions[0]}. Challenge them on this.`;
-                this.deliveryAgent.injectCoachingDirective(directive);
+            // Trigger Shark Coaching if in shark mode
+            if (this.config.feedbackMode === 'shark') {
+                this.runSharkCoaching();
             }
         }
         catch (err) {
             console.error(`[Orchestrator] Content analysis error:`, err);
+        }
+    }
+    async runSharkCoaching() {
+        // Rate limit: don't roast more than once every 12 seconds
+        const now = Date.now();
+        if (now - this.lastSharkRoastTs < 12000)
+            return;
+        // Don't roast if they haven't said enough yet
+        if (this.transcriptBuffer.length < 50)
+            return;
+        const latestCv = this.cvSnapshots.length > 0 ? this.cvSnapshots[this.cvSnapshots.length - 1] : null;
+        const contentAssessment = this.contentAgent.getLastAssessment();
+        const context = [
+            `Current Pacing: ${this.latestPacing} WPM`,
+            `Recent Filler Count: ${this.latestFiller}`,
+            `Eye Contact: ${latestCv ? latestCv.eyeContact : '??'}%`,
+            `Posture: ${latestCv ? (latestCv.isGoodPosture ? 'Good' : 'Poor') : '??'}`,
+            `Vocal Delivery Score: ${this.latestDeliveryScore}/100`,
+            `Content Strength: ${contentAssessment.argumentStrength}`,
+            `Transcript Chunk: "${this.transcriptBuffer.slice(-300)}"`,
+        ].join('\n');
+        try {
+            const response = await this.chatAi.models.generateContent({
+                model: 'gemini-flash-latest',
+                contents: SHARK_COACH_SYSTEM_PROMPT + context,
+            });
+            // Manually extract text parts to avoid the 'thoughtSignature' warning clutter
+            const roast = response.candidates?.[0]?.content?.parts
+                ?.map(p => p.text)
+                .filter(Boolean)
+                .join('')
+                .trim() || 'NO_ROAST';
+            if (roast !== 'NO_ROAST' && !roast.includes('NO_ROAST')) {
+                this.lastSharkRoastTs = Date.now();
+                // Send back for client-side TTS (more stable than Live API audio currently)
+                this.sendToClient({
+                    type: 'shark_speak',
+                    text: roast,
+                });
+            }
+        }
+        catch (err) {
+            console.error('[Orchestrator] Shark coaching error:', err);
         }
     }
     evaluateContent(assessment) {
@@ -324,12 +399,23 @@ class Orchestrator {
             message: signal.message,
             timestamp: now,
         });
+        // In Shark mode, send the alert for verbal delivery via client-side TTS
+        if (this.config.feedbackMode === 'shark') {
+            this.sendToClient({
+                type: 'shark_speak',
+                text: signal.message,
+            });
+        }
     }
     emitMetrics() {
+        const elapsedMins = (Date.now() - this.sessionStartTime) / 60000;
+        const fillerFrequency = elapsedMins > 0.1 ? (this.totalFillers / elapsedMins) : 0;
         this.sendToClient({
             type: 'metrics',
             pacing: this.latestPacing,
-            filler: this.latestFiller,
+            fillerRate: Math.round(fillerFrequency * 10) / 10,
+            totalFillers: this.totalFillers,
+            allFillerWords: this.allFillerWords,
             contentScore: this.latestContentScore,
             deliveryScore: this.latestDeliveryScore,
         });
@@ -357,9 +443,13 @@ class Orchestrator {
     }
     // ── Lifecycle ───────────────────────────────────────────────────────────
     getSessionSummary() {
-        const summary = this.deliveryAgent.getSessionSummary();
-        summary.cvSnapshots = this.cvSnapshots;
-        return summary;
+        const partialSummary = this.deliveryAgent.getSessionSummary();
+        return {
+            ...partialSummary,
+            agents: this.config.agents,
+            cvSnapshots: this.cvSnapshots,
+            tasksContext: this.config.tasksContext,
+        };
     }
     stop() {
         if (this.contentAnalysisInterval) {

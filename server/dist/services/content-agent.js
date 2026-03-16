@@ -1,7 +1,7 @@
 "use strict";
 /**
  * Content Agent — batch Gemini analysis of transcript chunks.
- * Uses gemini-2.5-flash for cost-effective, non-realtime content evaluation.
+ * Uses gemini-flash-latest for cost-effective, non-realtime content evaluation.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ContentAgent = void 0;
@@ -19,11 +19,12 @@ const DEFAULT_ASSESSMENT = {
 // ── Content Agent ───────────────────────────────────────────────────────────────
 class ContentAgent {
     ai;
-    static MODEL = 'gemini-2.5-flash';
+    static MODEL = 'gemini-flash-latest';
     lastAssessment = { ...DEFAULT_ASSESSMENT };
     constructor() {
         this.ai = new genai_1.GoogleGenAI({
             apiKey: process.env.GOOGLE_GENAI_API_KEY,
+            httpOptions: { apiVersion: 'v1beta' }
         });
     }
     /**
@@ -39,7 +40,11 @@ class ContentAgent {
                 model: ContentAgent.MODEL,
                 contents: `${agent_system_prompts_1.CONTENT_AGENT_PROMPT}\n\nTRANSCRIPT:\n${transcript}`,
             });
-            const text = response.text?.trim() || '{}';
+            // Manually extract text parts to avoid the 'thoughtSignature' warning clutter
+            const text = response.candidates?.[0]?.content?.parts
+                ?.map(p => p.text)
+                .filter(Boolean)
+                .join('') || '{}';
             const cleaned = text.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
             const parsed = JSON.parse(cleaned);
             this.lastAssessment = {

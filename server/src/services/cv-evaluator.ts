@@ -39,7 +39,8 @@ const GESTURE_TED_TARGET = 26;  // TED average
 
 const POSTURE_BAD_THRESHOLD_MS = 2000; // alert after 2s of bad posture
 const SHRIMP_BAD_THRESHOLD_MS = 2500;  // alert after 2.5s of rounding/shrimping
-const POSTURE_COOLDOWN_MS = 8000;      // 8s cooldown before next posture alert
+const EYE_BAD_THRESHOLD_MS = 2500;     // alert after 2.5s of low contact
+const GLOBAL_COOLDOWN_MS = 8000;       // 8s cooldown for all agent-specific alerts
 const STABILITY_WARNING = 0.5;  // excessive swaying
 const SHRIMP_NECK_WARNING = 0.98; // <95% of baseline neck ratio
 const SHRIMP_SHOULDER_WARNING = 0.90; // <90% of baseline shoulder breadth
@@ -49,6 +50,7 @@ const SHRIMP_SHOULDER_WARNING = 0.90; // <90% of baseline shoulder breadth
 export class CvEvaluator {
     private badPostureSince: number | null = null;
     private badShrimpSince: number | null = null;
+    private badEyeSince: number | null = null;
     private lastEyeAlertTs = 0;
     private lastPostureAlertTs = 0;
     private lastGestureAlertTs = 0;
@@ -63,13 +65,22 @@ export class CvEvaluator {
         const now = Date.now();
 
         // ── Eye Contact ─────────────────────────────────────────────────
-        if ((!agents || agents.eyeContact) && now - this.lastEyeAlertTs > 15000) {
-            if (telemetry.eyeContact < EYE_CONTACT_CRITICAL) {
-                signals.push({ source: 'eye_contact', severity: 'critical', message: 'Look at the camera' });
-                this.lastEyeAlertTs = now;
-            } else if (telemetry.eyeContact < EYE_CONTACT_WARNING) {
-                signals.push({ source: 'eye_contact', severity: 'warning', message: 'More eye contact' });
-                this.lastEyeAlertTs = now;
+        if (!agents || agents.eyeContact) {
+            const isLowContact = telemetry.eyeContact < EYE_CONTACT_WARNING;
+            
+            if (isLowContact) {
+                if (!this.badEyeSince) {
+                    this.badEyeSince = now;
+                } else if (now - this.badEyeSince > EYE_BAD_THRESHOLD_MS && now - this.lastEyeAlertTs > GLOBAL_COOLDOWN_MS) {
+                    const severity = telemetry.eyeContact < EYE_CONTACT_CRITICAL ? 'critical' : 'warning';
+                    const message = severity === 'critical' ? 'Look at the camera' : 'More eye contact';
+                    
+                    signals.push({ source: 'eye_contact', severity, message });
+                    this.lastEyeAlertTs = now;
+                    this.badEyeSince = null; // Reset after alert
+                }
+            } else {
+                this.badEyeSince = null;
             }
         }
 
@@ -78,7 +89,7 @@ export class CvEvaluator {
             if (!telemetry.isGoodPosture) {
                 if (!this.badPostureSince) {
                     this.badPostureSince = now;
-                } else if (now - this.badPostureSince > POSTURE_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > POSTURE_COOLDOWN_MS) {
+                } else if (now - this.badPostureSince > POSTURE_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > GLOBAL_COOLDOWN_MS) {
                     signals.push({ source: 'posture', severity: 'warning', message: 'Straighten your posture' });
                     this.lastPostureAlertTs = now;
                     this.badPostureSince = null;
@@ -94,7 +105,7 @@ export class CvEvaluator {
             if (isShrimping) {
                 if (!this.badShrimpSince) {
                     this.badShrimpSince = now;
-                } else if (now - this.badShrimpSince > SHRIMP_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > POSTURE_COOLDOWN_MS) {
+                } else if (now - this.badShrimpSince > SHRIMP_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > GLOBAL_COOLDOWN_MS) {
                     const msg = telemetry.neckStability! < SHRIMP_NECK_WARNING
                         ? 'Keep your head up, neck is collapsing forward'
                         : 'Roll your shoulders back, they are collapsing inward';
@@ -107,14 +118,14 @@ export class CvEvaluator {
             }
 
             // Body stability
-            if (telemetry.bodyStability !== undefined && telemetry.bodyStability < STABILITY_WARNING && now - this.lastPostureAlertTs > POSTURE_COOLDOWN_MS) {
+            if (telemetry.bodyStability !== undefined && telemetry.bodyStability < STABILITY_WARNING && now - this.lastPostureAlertTs > GLOBAL_COOLDOWN_MS) {
                 signals.push({ source: 'posture', severity: 'info', message: 'Reduce swaying' });
                 this.lastPostureAlertTs = now;
             }
         }
 
         // ── Gestures ────────────────────────────────────────────────────
-        if ((!agents || agents.gestures) && now - this.lastGestureAlertTs > 30000) {
+        if ((!agents || agents.gestures) && now - this.lastGestureAlertTs > GLOBAL_COOLDOWN_MS) {
             if (telemetry.gesturesPerMin > 0 && telemetry.gesturesPerMin < GESTURE_LOW_WARN) {
                 signals.push({ source: 'gesture', severity: 'info', message: 'Use more hand gestures' });
                 this.lastGestureAlertTs = now;
@@ -131,6 +142,7 @@ export class CvEvaluator {
     reset(): void {
         this.badPostureSince = null;
         this.badShrimpSince = null;
+        this.badEyeSince = null;
         this.lastEyeAlertTs = 0;
         this.lastPostureAlertTs = 0;
         this.lastGestureAlertTs = 0;

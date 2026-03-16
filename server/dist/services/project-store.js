@@ -209,13 +209,14 @@ exports.projectStore = {
     },
     async listTasks(projectId, status) {
         let query = db.collection(PROJECTS_COLLECTION).doc(projectId)
-            .collection('tasks')
-            .orderBy('createdAt', 'desc');
+            .collection('tasks');
         if (status) {
             query = query.where('status', '==', status);
         }
         const snapshot = await query.get();
-        return snapshot.docs.map(doc => doc.data());
+        const tasks = snapshot.docs.map(doc => doc.data());
+        // Sort in memory to avoid requiring a composite index
+        return tasks.sort((a, b) => b.createdAt - a.createdAt);
     },
     async updateTask(projectId, taskId, status) {
         const update = { status };
@@ -231,8 +232,11 @@ exports.projectStore = {
         if (tasks.length === 0)
             return '';
         return 'FOCUS AREAS (from previous sessions):\n' +
-            tasks.map((t, i) => `${i + 1}. [${t.category}] ${t.description}`).join('\n');
+            tasks.map((t) => `ID ${t.taskId}: [${t.category}] ${t.description}`).join('\n');
     },
+    async getOpenTasks(projectId) {
+        return this.listTasks(projectId, 'open');
+    }
 };
 // ── Text Extraction ─────────────────────────────────────────────────────────────
 /**
@@ -245,10 +249,13 @@ async function extractTextFromFile(fileBuffer, mimeType, filename) {
         return fileBuffer.toString('utf-8');
     }
     // For PDFs, images, etc. — use Gemini's multimodal input
-    const ai = new genai_1.GoogleGenAI({ apiKey: process.env.GOOGLE_GENAI_API_KEY });
+    const ai = new genai_1.GoogleGenAI({
+        apiKey: process.env.GOOGLE_GENAI_API_KEY,
+        httpOptions: { apiVersion: 'v1beta' }
+    });
     const base64Data = fileBuffer.toString('base64');
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-flash-latest',
         contents: [
             {
                 role: 'user',

@@ -167,22 +167,62 @@ export function useEyeContact(
                 };
 
                 const leftIris = landmarks[468];
-                const rightIris = landmarks[473];
-
                 const leftEyeInner = landmarks[133];
                 const leftEyeOuter = landmarks[33];
+                const leftEyeTop = landmarks[159];
+                const leftEyeBottom = landmarks[145];
 
-                if (leftIris && leftEyeInner && leftEyeOuter) {
+                const rightEyeOuter = landmarks[263];
+                const nose = landmarks[1];
+                const chin = landmarks[152];
+
+                if (leftIris && leftEyeInner && leftEyeOuter && leftEyeTop && leftEyeBottom && nose && chin) {
+                    // ── 1. Iris X-Centering (Horizontal) ──
                     const eyeWidth = Math.abs(leftEyeOuter.x - leftEyeInner.x);
-                    const irisOffset = Math.abs(leftIris.x - leftEyeInner.x);
-                    const ratio = irisOffset / eyeWidth;
+                    const irisXOffset = Math.abs(leftIris.x - leftEyeInner.x);
+                    const xRatio = irisXOffset / Math.max(eyeWidth, 0.001);
+                    
+                    // ── 2. Iris Y-Centering (Vertical) ──
+                    const eyeHeight = Math.abs(leftEyeBottom.y - leftEyeTop.y);
+                    const irisYOffset = Math.abs(leftIris.y - leftEyeTop.y);
+                    const yRatio = irisYOffset / Math.max(eyeHeight, 0.001);
 
-                    let score = 100;
-                    if (ratio < 0.35 || ratio > 0.65) {
-                        score = Math.max(0, 100 - (Math.abs(0.5 - ratio) * 200));
+                    // ── 3. Head Yaw (Left/Right) ──
+                    // Where is the nose relative to the eye corners?
+                    const headWidth = Math.abs(rightEyeOuter.x - leftEyeOuter.x);
+                    const noseXOffset = Math.abs(nose.x - leftEyeOuter.x);
+                    const yawRatio = noseXOffset / Math.max(headWidth, 0.001);
+
+                    // ── 4. Head Pitch (Up/Down) ──
+                    const eyeY = (leftEyeOuter.y + rightEyeOuter.y) / 2;
+                    const headHeight = Math.abs(chin.y - eyeY);
+                    const noseYOffset = Math.abs(nose.y - eyeY);
+                    const pitchRatio = noseYOffset / Math.max(headHeight, 0.001);
+
+                    // ── Score Composition ──
+                    let irisScore = 100;
+                    // Tighter safe zone (0.43 - 0.57)
+                    if (xRatio < 0.43 || xRatio > 0.57 || yRatio < 0.43 || yRatio > 0.57) {
+                        const xPenalty = Math.abs(0.5 - xRatio) * 400;
+                        const yPenalty = Math.abs(0.5 - yRatio) * 400;
+                        irisScore = Math.max(0, 100 - (xPenalty + yPenalty));
                     }
 
-                    setEyeContactScore(prev => Math.round((prev * 0.8) + (score * 0.2)));
+                    let headScore = 100;
+                    // Expected yawRatio ~0.5, pitchRatio ~0.35-0.45 depending on face
+                    if (yawRatio < 0.4 || yawRatio > 0.6 || pitchRatio > 0.5 || pitchRatio < 0.25) {
+                        const yawPenalty = Math.abs(0.5 - yawRatio) * 500;
+                        const pitchPenalty = Math.abs(0.38 - pitchRatio) * 500;
+                        headScore = Math.max(0, 100 - (yawPenalty + pitchPenalty));
+                    }
+
+                    const instantScore = (irisScore * 0.4) + (headScore * 0.6);
+
+                    // Asymmetric smoothing: drop fast, recover slow
+                    setEyeContactScore(prev => {
+                        const weight = instantScore < prev ? 0.4 : 0.1; // 40% update on drop, 10% on recovery
+                        return Math.round((prev * (1 - weight)) + (instantScore * weight));
+                    });
                 }
             } else {
                 landmarksRef.current = { ...landmarksRef.current, faceLandmarks: null };

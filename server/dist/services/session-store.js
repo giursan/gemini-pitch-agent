@@ -15,6 +15,7 @@ if (!firebase_admin_1.default.apps.length) {
     });
 }
 const db = firebase_admin_1.default.firestore();
+db.settings({ ignoreUndefinedProperties: true });
 const SESSIONS_COLLECTION = 'sessions';
 // ── Session Store (Firestore) ───────────────────────────────────────────────────
 exports.sessionStore = {

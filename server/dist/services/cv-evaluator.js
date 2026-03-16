@@ -12,11 +12,16 @@ const EYE_CONTACT_GOOD = 70;
 const GESTURE_LOW_WARN = 8; // gestures/min — too stiff
 const GESTURE_HIGH_WARN = 50; // gestures/min — too fidgety
 const GESTURE_TED_TARGET = 26; // TED average
-const POSTURE_BAD_THRESHOLD_MS = 5000; // alert after 5s of bad posture
+const POSTURE_BAD_THRESHOLD_MS = 2000; // alert after 2s of bad posture
+const SHRIMP_BAD_THRESHOLD_MS = 2500; // alert after 2.5s of rounding/shrimping
+const POSTURE_COOLDOWN_MS = 8000; // 8s cooldown before next posture alert
 const STABILITY_WARNING = 0.5; // excessive swaying
+const SHRIMP_NECK_WARNING = 0.98; // <95% of baseline neck ratio
+const SHRIMP_SHOULDER_WARNING = 0.90; // <90% of baseline shoulder breadth
 // ── Evaluator ───────────────────────────────────────────────────────────────────
 class CvEvaluator {
     badPostureSince = null;
+    badShrimpSince = null;
     lastEyeAlertTs = 0;
     lastPostureAlertTs = 0;
     lastGestureAlertTs = 0;
@@ -45,7 +50,7 @@ class CvEvaluator {
                 if (!this.badPostureSince) {
                     this.badPostureSince = now;
                 }
-                else if (now - this.badPostureSince > POSTURE_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > 20000) {
+                else if (now - this.badPostureSince > POSTURE_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > POSTURE_COOLDOWN_MS) {
                     signals.push({ source: 'posture', severity: 'warning', message: 'Straighten your posture' });
                     this.lastPostureAlertTs = now;
                     this.badPostureSince = null;
@@ -54,8 +59,27 @@ class CvEvaluator {
             else {
                 this.badPostureSince = null;
             }
+            // Shrimp detection
+            const isShrimping = (telemetry.neckStability !== undefined && telemetry.neckStability < SHRIMP_NECK_WARNING) ||
+                (telemetry.shoulderExpansion !== undefined && telemetry.shoulderExpansion < SHRIMP_SHOULDER_WARNING);
+            if (isShrimping) {
+                if (!this.badShrimpSince) {
+                    this.badShrimpSince = now;
+                }
+                else if (now - this.badShrimpSince > SHRIMP_BAD_THRESHOLD_MS && now - this.lastPostureAlertTs > POSTURE_COOLDOWN_MS) {
+                    const msg = telemetry.neckStability < SHRIMP_NECK_WARNING
+                        ? 'Keep your head up, neck is collapsing forward'
+                        : 'Roll your shoulders back, they are collapsing inward';
+                    signals.push({ source: 'posture', severity: 'warning', message: msg });
+                    this.lastPostureAlertTs = now;
+                    this.badShrimpSince = null;
+                }
+            }
+            else {
+                this.badShrimpSince = null;
+            }
             // Body stability
-            if (telemetry.bodyStability !== undefined && telemetry.bodyStability < STABILITY_WARNING && now - this.lastPostureAlertTs > 20000) {
+            if (telemetry.bodyStability !== undefined && telemetry.bodyStability < STABILITY_WARNING && now - this.lastPostureAlertTs > POSTURE_COOLDOWN_MS) {
                 signals.push({ source: 'posture', severity: 'info', message: 'Reduce swaying' });
                 this.lastPostureAlertTs = now;
             }
@@ -76,6 +100,7 @@ class CvEvaluator {
     /** Reset state for a new session */
     reset() {
         this.badPostureSince = null;
+        this.badShrimpSince = null;
         this.lastEyeAlertTs = 0;
         this.lastPostureAlertTs = 0;
         this.lastGestureAlertTs = 0;

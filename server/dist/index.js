@@ -292,9 +292,30 @@ wss.on('connection', (ws) => {
                     // Persist to Firestore (project-scoped or legacy)
                     if (currentProjectId) {
                         await project_store_1.projectStore.saveSession(currentProjectId, summary, report);
-                        // Auto-generate improvement tasks from report
-                        if (report.topImprovements && report.topImprovements.length > 0) {
-                            await project_store_1.projectStore.addTasks(currentProjectId, summary.sessionId, report.topImprovements);
+                        // Process tasks derived by AI
+                        if (Array.isArray(report.newTasks)) {
+                            // Group new tasks by category for efficient saving
+                            const tasksByCategory = report.newTasks.reduce((acc, t) => {
+                                acc[t.category] = acc[t.category] || [];
+                                acc[t.category].push(t.description);
+                                return acc;
+                            }, {});
+                            for (const [cat, items] of Object.entries(tasksByCategory)) {
+                                await project_store_1.projectStore.addTasks(currentProjectId, summary.sessionId, items, cat);
+                            }
+                        }
+                        // Mark resolved tasks as improved
+                        if (Array.isArray(report.resolvedTaskIds)) {
+                            for (const taskId of report.resolvedTaskIds) {
+                                try {
+                                    if (taskId && taskId.length > 5) { // Basic sanity check for UUIDs
+                                        await project_store_1.projectStore.updateTask(currentProjectId, taskId, 'improved');
+                                    }
+                                }
+                                catch (e) {
+                                    console.warn(`[index] Could not resolve task ${taskId}:`, e);
+                                }
+                            }
                         }
                     }
                     else {
