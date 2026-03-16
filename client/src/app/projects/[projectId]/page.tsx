@@ -32,6 +32,7 @@ import {
     Save
 } from 'lucide-react';
 import ProjectCoachChat from '../../ProjectCoachChat';
+import { apiFetch } from '../../../lib/api';
 
 // Aura Logo path: /images/aura-ai-logo-dark.svg
 
@@ -112,10 +113,10 @@ export default function ProjectDetailPage() {
         setIsLoading(true);
         try {
             const [projRes, matRes, taskRes, sessRes] = await Promise.all([
-                fetch(`http://localhost:8080/projects/${projectId}`),
-                fetch(`http://localhost:8080/projects/${projectId}/materials`),
-                fetch(`http://localhost:8080/projects/${projectId}/tasks`),
-                fetch(`http://localhost:8080/projects/${projectId}/sessions`)
+                apiFetch(`/projects/${projectId}`),
+                apiFetch(`/projects/${projectId}/materials`),
+                apiFetch(`/projects/${projectId}/tasks`),
+                apiFetch(`/projects/${projectId}/sessions`)
             ]);
 
             if (projRes.ok) {
@@ -136,7 +137,7 @@ export default function ProjectDetailPage() {
 
     const viewReport = async (sessionId: string) => {
         try {
-            const res = await fetch(`http://localhost:8080/projects/${projectId}/sessions/${sessionId}`);
+            const res = await apiFetch(`/projects/${projectId}/sessions/${sessionId}`);
             const data = await res.json();
             setSelectedReport(data);
         } catch (err) {
@@ -153,7 +154,7 @@ export default function ProjectDetailPage() {
         formData.append('file', file);
 
         try {
-            const res = await fetch(`http://localhost:8080/projects/${projectId}/materials`, {
+            const res = await apiFetch(`/projects/${projectId}/materials`, {
                 method: 'POST',
                 body: formData
             });
@@ -206,14 +207,14 @@ export default function ProjectDetailPage() {
         
         try {
             if (deleteModal.type === 'material') {
-                const res = await fetch(`http://localhost:8080/projects/${projectId}/materials/${deleteModal.id}`, {
+                const res = await apiFetch(`/projects/${projectId}/materials/${deleteModal.id}`, {
                     method: 'DELETE'
                 });
                 if (res.ok) {
                     setMaterials(prev => prev.filter(m => m.materialId !== deleteModal.id));
                 }
             } else if (deleteModal.type === 'session') {
-                const res = await fetch(`http://localhost:8080/projects/${projectId}/sessions/${deleteModal.id}`, {
+                const res = await apiFetch(`/projects/${projectId}/sessions/${deleteModal.id}`, {
                     method: 'DELETE'
                 });
                 if (res.ok) {
@@ -235,7 +236,7 @@ export default function ProjectDetailPage() {
 
     const handleTaskStatusChange = async (taskId: string, newStatus: 'improved' | 'dismissed' | 'open') => {
         try {
-            const res = await fetch(`http://localhost:8080/projects/${projectId}/tasks/${taskId}`, {
+            const res = await apiFetch(`/projects/${projectId}/tasks/${taskId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: newStatus })
@@ -253,7 +254,7 @@ export default function ProjectDetailPage() {
 
     const handleUpdateProject = async () => {
         try {
-            const response = await fetch(`http://localhost:8080/projects/${projectId}`, {
+            const response = await apiFetch(`/projects/${projectId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

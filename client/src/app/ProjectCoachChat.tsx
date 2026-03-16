@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { MessageSquare, Send, X, Bot, User, Loader2, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { apiFetch } from '../lib/api';
 
 interface Message {
     role: 'user' | 'model';
@@ -31,7 +32,7 @@ export default function ProjectCoachChat({ projectId }: { projectId: string }) {
         setIsLoading(true);
 
         try {
-            const response = await fetch(`http://localhost:8080/projects/${projectId}/chat`, {
+            const response = await apiFetch(`/projects/${projectId}/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

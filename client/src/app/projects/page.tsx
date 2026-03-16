@@ -12,6 +12,7 @@ import {
     Search,
     Video
 } from 'lucide-react';
+import { apiFetch } from '../../lib/api';
 
 interface Project {
     projectId: string;
@@ -38,7 +39,7 @@ export default function ProjectsPage() {
 
     const fetchProjects = async () => {
         try {
-            const res = await fetch('http://localhost:8080/projects');
+            const res = await apiFetch('/projects');
             const data = await res.json();
             if (Array.isArray(data)) {
                 setProjects(data);
@@ -59,7 +60,7 @@ export default function ProjectsPage() {
 
         setIsCreating(true);
         try {
-            const res = await fetch('http://localhost:8080/projects', {
+            const res = await apiFetch('/projects', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

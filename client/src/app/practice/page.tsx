@@ -14,6 +14,7 @@ import { Folder, UserCheck } from 'lucide-react';
 import PostureCalibrationOverlay from '../PostureCalibrationOverlay';
 import ReactMarkdown from 'react-markdown';
 import ProjectSelectionModal from '@/components/ProjectSelectionModal';
+import { apiFetch, getWsUrl } from '@/lib/api';
 
 // ── Audio Util ──────────────────────────────────────────────────────────────────
 
@@ -235,7 +236,7 @@ function Home() {
 
   useEffect(() => {
     if (projectId) {
-      fetch(`http://localhost:8080/projects/${projectId}`)
+      apiFetch(`/projects/${projectId}`)
         .then(r => r.json())
         .then(data => setProjectTitle(data.title))
         .catch(console.error);
@@ -313,7 +314,8 @@ function Home() {
       if (!stream) return;
       audioStreamRef.current = audioStream;
 
-      const ws = new WebSocket('ws://localhost:8080');
+      const wsUrl = await getWsUrl();
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {

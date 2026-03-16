@@ -11,12 +11,14 @@ import { generateReport } from './services/report-generator';
 import { sessionStore } from './services/session-store';
 import { projectStore } from './services/project-store';
 import { streamProjectCoachResponse } from './services/project-coach';
+import { requireAuth, type AuthedRequest } from './middleware/auth';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(requireAuth);
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB max
 
@@ -24,6 +26,14 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 8080;
+
+const handleNotFound = (err: unknown, res: express.Response, message: string) => {
+    if (err instanceof Error && err.message === 'not_found') {
+        res.status(404).json({ error: message });
+        return true;
+    }
+    return false;
+};
 
 // ── REST Endpoints ──────────────────────────────────────────────────────────────
 
@@ -33,20 +43,22 @@ app.get('/health', (_req, res) => {
 
 // ── Legacy Session Endpoints (backward compat) ──────────────────────────────────
 
-app.get('/sessions', async (_req, res) => {
-    const sessions = await sessionStore.list();
+app.get('/sessions', async (req: AuthedRequest, res) => {
+    const sessions = await sessionStore.list(req.user!.uid);
     res.json(sessions);
 });
 
-app.get('/sessions/:id', async (req, res) => {
-    const session = await sessionStore.get(req.params.id);
+app.get('/sessions/:id', async (req: AuthedRequest, res) => {
+    const sessionId = String(req.params.id);
+    const session = await sessionStore.get(req.user!.uid, sessionId);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     res.json(session);
 });
 
-app.delete('/sessions/:id', async (req, res) => {
+app.delete('/sessions/:id', async (req: AuthedRequest, res) => {
     try {
-        await sessionStore.delete(req.params.id);
+        const sessionId = String(req.params.id);
+        await sessionStore.delete(req.user!.uid, sessionId);
         res.status(204).send();
     } catch (err) {
         console.error('Failed to delete session:', err);
@@ -56,9 +68,9 @@ app.delete('/sessions/:id', async (req, res) => {
 
 // ── Project Endpoints ───────────────────────────────────────────────────────────
 
-app.get('/projects', async (_req, res) => {
+app.get('/projects', async (req: AuthedRequest, res) => {
     try {
-        const projects = await projectStore.list();
+        const projects = await projectStore.list(req.user!.uid);
         res.json(projects);
     } catch (err) {
         console.error('Failed to list projects:', err);
@@ -66,13 +78,13 @@ app.get('/projects', async (_req, res) => {
     }
 });
 
-app.post('/projects', async (req, res) => {
+app.post('/projects', async (req: AuthedRequest, res) => {
     try {
         const { title, description } = req.body;
         if (!title || typeof title !== 'string') {
             return res.status(400).json({ error: 'Title is required' });
         }
-        const project = await projectStore.create(title.trim(), (description || '').trim());
+        const project = await projectStore.create(req.user!.uid, title.trim(), (description || '').trim());
         res.status(201).json(project);
     } catch (err) {
         console.error('Failed to create project:', err);
@@ -80,9 +92,9 @@ app.post('/projects', async (req, res) => {
     }
 });
 
-app.get('/projects/:id', async (req, res) => {
+app.get('/projects/:id', async (req: AuthedRequest, res) => {
     try {
-        const project = await projectStore.get(req.params.id as string);
+        const project = await projectStore.get(req.params.id as string, req.user!.uid);
         if (!project) return res.status(404).json({ error: 'Project not found' });
         res.json(project);
     } catch (err) {
@@ -91,36 +103,40 @@ app.get('/projects/:id', async (req, res) => {
     }
 });
 
-app.put('/projects/:id', async (req, res) => {
+app.put('/projects/:id', async (req: AuthedRequest, res) => {
     try {
         const { title, description } = req.body;
-        await projectStore.update(req.params.id as string, {
+        await projectStore.update(req.params.id as string, req.user!.uid, {
             ...(title !== undefined && { title: title.trim() }),
             ...(description !== undefined && { description: description.trim() }),
         });
         res.json({ success: true });
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to update project:', err);
         res.status(500).json({ error: 'Failed to update project' });
     }
 });
 
-app.delete('/projects/:id', async (req, res) => {
+app.delete('/projects/:id', async (req: AuthedRequest, res) => {
     try {
-        await projectStore.delete(req.params.id as string);
+        await projectStore.delete(req.params.id as string, req.user!.uid);
         res.status(204).send();
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to delete project:', err);
         res.status(500).json({ error: 'Failed to delete project' });
     }
 });
 
-app.post('/projects/:id/chat', async (req, res) => {
+app.post('/projects/:id/chat', async (req: AuthedRequest, res) => {
     try {
         const { message, history } = req.body;
-        const projectId = req.params.id;
+        const projectId = String(req.params.id);
 
         if (!message) return res.status(400).json({ error: 'Message is required' });
+        const project = await projectStore.get(projectId, req.user!.uid);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
 
         // Set headers for streaming
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -128,6 +144,7 @@ app.post('/projects/:id/chat', async (req, res) => {
 
         await streamProjectCoachResponse(
             projectId,
+            req.user!.uid,
             message,
             history || [],
             (chunk) => {
@@ -148,32 +165,35 @@ app.post('/projects/:id/chat', async (req, res) => {
 
 // ── Project Sessions ────────────────────────────────────────────────────────────
 
-app.get('/projects/:id/sessions', async (req, res) => {
+app.get('/projects/:id/sessions', async (req: AuthedRequest, res) => {
     try {
-        const sessions = await projectStore.listSessions(req.params.id as string);
+        const sessions = await projectStore.listSessions(req.params.id as string, req.user!.uid);
         res.json(sessions);
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to list project sessions:', err);
         res.status(500).json({ error: 'Failed to list sessions' });
     }
 });
 
-app.get('/projects/:id/sessions/:sessionId', async (req, res) => {
+app.get('/projects/:id/sessions/:sessionId', async (req: AuthedRequest, res) => {
     try {
-        const session = await projectStore.getSession(req.params.id as string, req.params.sessionId as string);
+        const session = await projectStore.getSession(req.params.id as string, req.user!.uid, req.params.sessionId as string);
         if (!session) return res.status(404).json({ error: 'Session not found' });
         res.json(session);
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to get session:', err);
         res.status(500).json({ error: 'Failed to get session' });
     }
 });
 
-app.delete('/projects/:id/sessions/:sessionId', async (req, res) => {
+app.delete('/projects/:id/sessions/:sessionId', async (req: AuthedRequest, res) => {
     try {
-        await projectStore.deleteSession(req.params.id as string, req.params.sessionId as string);
+        await projectStore.deleteSession(req.params.id as string, req.user!.uid, req.params.sessionId as string);
         res.status(204).send();
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to delete session:', err);
         res.status(500).json({ error: 'Failed to delete session' });
     }
@@ -181,39 +201,43 @@ app.delete('/projects/:id/sessions/:sessionId', async (req, res) => {
 
 // ── Project Materials ───────────────────────────────────────────────────────────
 
-app.get('/projects/:id/materials', async (req, res) => {
+app.get('/projects/:id/materials', async (req: AuthedRequest, res) => {
     try {
-        const materials = await projectStore.listMaterials(req.params.id as string);
+        const materials = await projectStore.listMaterials(req.params.id as string, req.user!.uid);
         res.json(materials);
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to list materials:', err);
         res.status(500).json({ error: 'Failed to list materials' });
     }
 });
 
-app.post('/projects/:id/materials', upload.single('file'), async (req, res) => {
+app.post('/projects/:id/materials', upload.single('file'), async (req: AuthedRequest, res) => {
     try {
         const file = req.file;
         if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
         const material = await projectStore.addMaterial(
             req.params.id as string,
+            req.user!.uid,
             String(file.originalname),
             file.mimetype,
             file.buffer,
         );
         res.status(201).json(material);
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to upload material:', err);
         res.status(500).json({ error: 'Failed to upload material' });
     }
 });
 
-app.delete('/projects/:id/materials/:materialId', async (req, res) => {
+app.delete('/projects/:id/materials/:materialId', async (req: AuthedRequest, res) => {
     try {
-        await projectStore.deleteMaterial(req.params.id as string, req.params.materialId as string);
+        await projectStore.deleteMaterial(req.params.id as string, req.user!.uid, req.params.materialId as string);
         res.status(204).send();
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to delete material:', err);
         res.status(500).json({ error: 'Failed to delete material' });
     }
@@ -221,30 +245,33 @@ app.delete('/projects/:id/materials/:materialId', async (req, res) => {
 
 // ── Project Tasks ───────────────────────────────────────────────────────────────
 
-app.get('/projects/:id/tasks', async (req, res) => {
+app.get('/projects/:id/tasks', async (req: AuthedRequest, res) => {
     try {
         const rawStatus = req.query.status;
         const status = typeof rawStatus === 'string' ? rawStatus : undefined;
         const tasks = await projectStore.listTasks(
             req.params.id as string,
+            req.user!.uid,
             status as 'open' | 'improved' | 'dismissed' | undefined,
         );
         res.json(tasks);
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to list tasks:', err);
         res.status(500).json({ error: 'Failed to list tasks' });
     }
 });
 
-app.put('/projects/:id/tasks/:taskId', async (req, res) => {
+app.put('/projects/:id/tasks/:taskId', async (req: AuthedRequest, res) => {
     try {
         const { status } = req.body;
         if (!['open', 'improved', 'dismissed'].includes(status)) {
             return res.status(400).json({ error: 'Invalid status' });
         }
-        await projectStore.updateTask(req.params.id as string, req.params.taskId as string, status);
+        await projectStore.updateTask(req.params.id as string, req.user!.uid, req.params.taskId as string, status);
         res.json({ success: true });
     } catch (err) {
+        if (handleNotFound(err, res, 'Project not found')) return;
         console.error('Failed to update task:', err);
         res.status(500).json({ error: 'Failed to update task' });
     }
@@ -252,15 +279,35 @@ app.put('/projects/:id/tasks/:taskId', async (req, res) => {
 
 // ── WebSocket Handling ──────────────────────────────────────────────────────────
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, req) => {
     console.log('Client connected to proxy WebSocket.');
 
     let orchestrator: Orchestrator | null = null;
     let isPaused = false;
     let currentProjectId: string | null = null;
 
+    const authPromise = (async () => {
+        try {
+            const baseUrl = `http://${req.headers.host || 'localhost'}`;
+            const url = new URL(req.url || '', baseUrl);
+            const token = url.searchParams.get('token');
+            if (!token) {
+                ws.close(1008, 'Missing auth token');
+                return null;
+            }
+            const decoded = await admin.auth().verifyIdToken(token);
+            return { uid: decoded.uid, email: decoded.email };
+        } catch (err) {
+            ws.close(1008, 'Invalid auth token');
+            return null;
+        }
+    })();
+
     ws.on('message', async (rawMessage: Buffer) => {
         try {
+            const auth = await authPromise;
+            if (!auth) return;
+
             const data = JSON.parse(rawMessage.toString());
 
             switch (data.type) {
@@ -289,8 +336,14 @@ wss.on('connection', (ws: WebSocket) => {
                     let tasksContext = '';
                     if (projectId) {
                         try {
-                            materialsContext = await projectStore.getMaterialsContext(projectId);
-                            tasksContext = await projectStore.getOpenTasksContext(projectId);
+                            const project = await projectStore.get(projectId, auth.uid);
+                            if (!project) {
+                                ws.send(JSON.stringify({ type: 'error', message: 'Project not found or access denied.' }));
+                                currentProjectId = null;
+                                return;
+                            }
+                            materialsContext = await projectStore.getMaterialsContext(projectId, auth.uid);
+                            tasksContext = await projectStore.getOpenTasksContext(projectId, auth.uid);
                         } catch (err) {
                             console.error('Failed to load project context:', err);
                         }
@@ -350,8 +403,14 @@ wss.on('connection', (ws: WebSocket) => {
 
                     // Allow updating project ID at the very end (e.g. from quick session)
                     if (data.projectId) {
-                        currentProjectId = data.projectId;
-                        orchestrator.updateConfig({ projectId: data.projectId });
+                        const project = await projectStore.get(data.projectId, auth.uid);
+                        if (!project) {
+                            ws.send(JSON.stringify({ type: 'error', message: 'Project not found or access denied.' }));
+                            currentProjectId = null;
+                        } else {
+                            currentProjectId = data.projectId;
+                            orchestrator.updateConfig({ projectId: data.projectId });
+                        }
                     }
 
                     // Grab the summary before stopping
@@ -366,7 +425,7 @@ wss.on('connection', (ws: WebSocket) => {
 
                     // Persist to Firestore (project-scoped or legacy)
                     if (currentProjectId) {
-                        await projectStore.saveSession(currentProjectId, summary, report);
+                        await projectStore.saveSession(currentProjectId, auth.uid, summary, report);
 
                         // Process tasks derived by AI
                         if (Array.isArray(report.newTasks)) {
@@ -378,7 +437,7 @@ wss.on('connection', (ws: WebSocket) => {
                             }, {});
 
                             for (const [cat, items] of Object.entries(tasksByCategory)) {
-                                await projectStore.addTasks(currentProjectId, summary.sessionId, items as string[], cat as any);
+                                await projectStore.addTasks(currentProjectId, auth.uid, summary.sessionId, items as string[], cat as any);
                             }
                         }
 
@@ -387,7 +446,7 @@ wss.on('connection', (ws: WebSocket) => {
                             for (const taskId of report.resolvedTaskIds) {
                                 try {
                                     if (taskId && taskId.length > 5) { // Basic sanity check for UUIDs
-                                        await projectStore.updateTask(currentProjectId, taskId, 'improved');
+                                        await projectStore.updateTask(currentProjectId, auth.uid, taskId, 'improved');
                                     }
                                 } catch (e) {
                                     console.warn(`[index] Could not resolve task ${taskId}:`, e);
@@ -395,7 +454,7 @@ wss.on('connection', (ws: WebSocket) => {
                             }
                         }
                     } else {
-                        await sessionStore.save(summary, report);
+                        await sessionStore.save(auth.uid, summary, report);
                     }
 
                     // Send report to client

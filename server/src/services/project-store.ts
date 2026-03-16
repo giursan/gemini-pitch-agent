@@ -22,6 +22,7 @@ const PROJECTS_COLLECTION = 'projects';
 
 export interface Project {
     projectId: string;
+    ownerId: string;
     title: string;
     description: string;
     createdAt: number;
@@ -53,14 +54,27 @@ export interface ImprovementTask {
 
 // ── Project Store ───────────────────────────────────────────────────────────────
 
+async function requireOwnedProject(projectId: string, ownerId: string): Promise<Project> {
+    const doc = await db.collection(PROJECTS_COLLECTION).doc(projectId).get();
+    if (!doc.exists) {
+        throw new Error('not_found');
+    }
+    const project = doc.data() as Project;
+    if (project.ownerId !== ownerId) {
+        throw new Error('not_found');
+    }
+    return project;
+}
+
 export const projectStore = {
     // ── Project CRUD ────────────────────────────────────────────────────────────
 
-    async create(title: string, description: string = ''): Promise<Project> {
+    async create(ownerId: string, title: string, description: string = ''): Promise<Project> {
         const projectId = randomUUID();
         const now = Date.now();
         const project: Project = {
             projectId,
+            ownerId,
             title,
             description,
             createdAt: now,
@@ -74,27 +88,32 @@ export const projectStore = {
         return project;
     },
 
-    async get(projectId: string): Promise<Project | null> {
-        const doc = await db.collection(PROJECTS_COLLECTION).doc(projectId).get();
-        if (!doc.exists) return null;
-        return doc.data() as Project;
+    async get(projectId: string, ownerId: string): Promise<Project | null> {
+        try {
+            return await requireOwnedProject(projectId, ownerId);
+        } catch {
+            return null;
+        }
     },
 
-    async list(): Promise<Project[]> {
+    async list(ownerId: string): Promise<Project[]> {
         const snapshot = await db.collection(PROJECTS_COLLECTION)
+            .where('ownerId', '==', ownerId)
             .orderBy('updatedAt', 'desc')
             .get();
         return snapshot.docs.map(doc => doc.data() as Project);
     },
 
-    async update(projectId: string, updates: Partial<Pick<Project, 'title' | 'description'>>): Promise<void> {
+    async update(projectId: string, ownerId: string, updates: Partial<Pick<Project, 'title' | 'description'>>): Promise<void> {
+        await requireOwnedProject(projectId, ownerId);
         await db.collection(PROJECTS_COLLECTION).doc(projectId).update({
             ...updates,
             updatedAt: Date.now(),
         });
     },
 
-    async delete(projectId: string): Promise<void> {
+    async delete(projectId: string, ownerId: string): Promise<void> {
+        await requireOwnedProject(projectId, ownerId);
         // Delete subcollections first
         const subcollections = ['sessions', 'materials', 'tasks'];
         for (const sub of subcollections) {
@@ -109,7 +128,8 @@ export const projectStore = {
 
     // ── Sessions (scoped to project) ────────────────────────────────────────────
 
-    async saveSession(projectId: string, summary: SessionSummary, report: Record<string, any>): Promise<void> {
+    async saveSession(projectId: string, ownerId: string, summary: SessionSummary, report: Record<string, any>): Promise<void> {
+        await requireOwnedProject(projectId, ownerId);
         const data = {
             ...summary,
             projectId,
@@ -136,7 +156,7 @@ export const projectStore = {
         console.log(`Session saved to project ${projectId}: ${summary.sessionId}`);
     },
 
-    async listSessions(projectId: string): Promise<Array<{
+    async listSessions(projectId: string, ownerId: string): Promise<Array<{
         sessionId: string;
         startedAt: number;
         endedAt: number | null;
@@ -145,6 +165,7 @@ export const projectStore = {
         overallScore: number;
         title: string;
     }>> {
+        await requireOwnedProject(projectId, ownerId);
         const snapshot = await db.collection(PROJECTS_COLLECTION).doc(projectId)
             .collection('sessions')
             .orderBy('startedAt', 'desc')
@@ -165,14 +186,16 @@ export const projectStore = {
         });
     },
 
-    async getSession(projectId: string, sessionId: string): Promise<Record<string, any> | null> {
+    async getSession(projectId: string, ownerId: string, sessionId: string): Promise<Record<string, any> | null> {
+        await requireOwnedProject(projectId, ownerId);
         const doc = await db.collection(PROJECTS_COLLECTION).doc(projectId)
             .collection('sessions').doc(sessionId).get();
         if (!doc.exists) return null;
         return doc.data() as Record<string, any>;
     },
 
-    async deleteSession(projectId: string, sessionId: string): Promise<void> {
+    async deleteSession(projectId: string, ownerId: string, sessionId: string): Promise<void> {
+        await requireOwnedProject(projectId, ownerId);
         await db.collection(PROJECTS_COLLECTION).doc(projectId)
             .collection('sessions').doc(sessionId).delete();
         // Decrement session count
@@ -190,7 +213,8 @@ export const projectStore = {
 
     // ── Materials ───────────────────────────────────────────────────────────────
 
-    async addMaterial(projectId: string, filename: string, mimeType: string, fileBuffer: Buffer): Promise<Material> {
+    async addMaterial(projectId: string, ownerId: string, filename: string, mimeType: string, fileBuffer: Buffer): Promise<Material> {
+        await requireOwnedProject(projectId, ownerId);
         const materialId = randomUUID();
 
         // Extract text from the uploaded file using Gemini Flash
@@ -234,7 +258,8 @@ export const projectStore = {
         return material;
     },
 
-    async listMaterials(projectId: string): Promise<Material[]> {
+    async listMaterials(projectId: string, ownerId: string): Promise<Material[]> {
+        await requireOwnedProject(projectId, ownerId);
         const snapshot = await db.collection(PROJECTS_COLLECTION).doc(projectId)
             .collection('materials')
             .orderBy('uploadedAt', 'desc')
@@ -242,7 +267,8 @@ export const projectStore = {
         return snapshot.docs.map(doc => doc.data() as Material);
     },
 
-    async deleteMaterial(projectId: string, materialId: string): Promise<void> {
+    async deleteMaterial(projectId: string, ownerId: string, materialId: string): Promise<void> {
+        await requireOwnedProject(projectId, ownerId);
         await db.collection(PROJECTS_COLLECTION).doc(projectId)
             .collection('materials').doc(materialId).delete();
         await db.collection(PROJECTS_COLLECTION).doc(projectId).update({ updatedAt: Date.now() });
@@ -250,8 +276,8 @@ export const projectStore = {
     },
 
     /** Get all extracted text from project materials (for Content Agent context). */
-    async getMaterialsContext(projectId: string): Promise<string> {
-        const materials = await this.listMaterials(projectId);
+    async getMaterialsContext(projectId: string, ownerId: string): Promise<string> {
+        const materials = await this.listMaterials(projectId, ownerId);
         if (materials.length === 0) return '';
         return materials
             .map(m => `--- ${m.filename} ---\n${m.extractedText}`)
@@ -260,7 +286,8 @@ export const projectStore = {
 
     // ── Improvement Tasks ───────────────────────────────────────────────────────
 
-    async addTasks(projectId: string, sessionId: string, improvements: string[], category: ImprovementTask['category'] = 'content'): Promise<ImprovementTask[]> {
+    async addTasks(projectId: string, ownerId: string, sessionId: string, improvements: string[], category: ImprovementTask['category'] = 'content'): Promise<ImprovementTask[]> {
+        await requireOwnedProject(projectId, ownerId);
         const tasks: ImprovementTask[] = [];
         const batch = db.batch();
 
@@ -287,7 +314,8 @@ export const projectStore = {
         return tasks;
     },
 
-    async listTasks(projectId: string, status?: ImprovementTask['status']): Promise<ImprovementTask[]> {
+    async listTasks(projectId: string, ownerId: string, status?: ImprovementTask['status']): Promise<ImprovementTask[]> {
+        await requireOwnedProject(projectId, ownerId);
         let query: admin.firestore.Query = db.collection(PROJECTS_COLLECTION).doc(projectId)
             .collection('tasks');
 
@@ -300,7 +328,8 @@ export const projectStore = {
         return tasks.sort((a, b) => b.createdAt - a.createdAt);
     },
 
-    async updateTask(projectId: string, taskId: string, status: ImprovementTask['status']): Promise<void> {
+    async updateTask(projectId: string, ownerId: string, taskId: string, status: ImprovementTask['status']): Promise<void> {
+        await requireOwnedProject(projectId, ownerId);
         const update: Record<string, any> = { status };
         if (status === 'improved' || status === 'dismissed') {
             update.resolvedAt = Date.now();
@@ -310,15 +339,15 @@ export const projectStore = {
     },
 
     /** Get open tasks as a context string for the orchestrator. */
-    async getOpenTasksContext(projectId: string): Promise<string> {
-        const tasks = await this.listTasks(projectId, 'open');
+    async getOpenTasksContext(projectId: string, ownerId: string): Promise<string> {
+        const tasks = await this.listTasks(projectId, ownerId, 'open');
         if (tasks.length === 0) return '';
         return 'FOCUS AREAS (from previous sessions):\n' +
             tasks.map((t) => `ID ${t.taskId}: [${t.category}] ${t.description}`).join('\n');
     },
 
-    async getOpenTasks(projectId: string): Promise<ImprovementTask[]> {
-        return this.listTasks(projectId, 'open');
+    async getOpenTasks(projectId: string, ownerId: string): Promise<ImprovementTask[]> {
+        return this.listTasks(projectId, ownerId, 'open');
     }
 };
 

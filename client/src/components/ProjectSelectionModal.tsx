@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Plus, Check, Loader2, X } from 'lucide-react';
+import { apiFetch } from '../lib/api';
 
 interface Project {
   projectId: string;
@@ -36,7 +37,7 @@ export default function ProjectSelectionModal({
   const fetchProjects = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('http://localhost:8080/projects');
+      const res = await apiFetch('/projects');
       if (res.ok) {
         const data = await res.json();
         setProjects(data);
@@ -52,7 +53,7 @@ export default function ProjectSelectionModal({
     if (!newTitle.trim()) return;
     setIsLoading(true);
     try {
-      const res = await fetch('http://localhost:8080/projects', {
+      const res = await apiFetch('/projects', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

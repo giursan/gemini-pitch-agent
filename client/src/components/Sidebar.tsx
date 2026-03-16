@@ -3,11 +3,13 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Video, Activity, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
+import { Home, Video, ChevronLeft, ChevronRight, HelpCircle, LogOut } from 'lucide-react';
+import { useAuth } from '../lib/auth';
 
 export default function Sidebar() {
     const pathname = usePathname();
     const [isCollapsed, setIsCollapsed] = useState(false);
+    const { user, signOutUser } = useAuth();
 
     const navItems = [
         { name: 'Dashboard', href: '/', icon: Home },
@@ -76,9 +78,19 @@ export default function Sidebar() {
             </nav>
 
             {/* Footer */}
-            <div className={`p-6 border-t border-neutral-200 text-xs text-neutral-400 transition-all duration-500 whitespace-nowrap overflow-hidden ${isCollapsed ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}>
-                Aura Pitch Mentor v2.0<br />
-                Google Cloud UI
+            <div className={`p-6 border-t border-neutral-200 text-xs text-neutral-400 transition-all duration-500 overflow-hidden ${isCollapsed ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}>
+                {user?.email && (
+                    <div className="text-[10px] font-bold text-neutral-400 mb-3 truncate">
+                        {user.email}
+                    </div>
+                )}
+                <button
+                    onClick={() => signOutUser()}
+                    className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-neutral-400 hover:text-neutral-900 transition-colors"
+                >
+                    <LogOut className="w-3.5 h-3.5" />
+                    Sign Out
+                </button>
             </div>
         </aside>
     );

@@ -15,6 +15,7 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 db.settings({ ignoreUndefinedProperties: true });
+const USERS_COLLECTION = 'users';
 const SESSIONS_COLLECTION = 'sessions';
 
 // ── Session Store (Firestore) ───────────────────────────────────────────────────
@@ -23,20 +24,21 @@ export const sessionStore = {
     /**
      * Save a session with its report.
      */
-    async save(summary: SessionSummary, report: Record<string, any>): Promise<void> {
+    async save(ownerId: string, summary: SessionSummary, report: Record<string, any>): Promise<void> {
         const data = {
             ...summary,
             report,
             savedAt: Date.now(),
         };
-        await db.collection(SESSIONS_COLLECTION).doc(summary.sessionId).set(data);
+        await db.collection(USERS_COLLECTION).doc(ownerId)
+            .collection(SESSIONS_COLLECTION).doc(summary.sessionId).set(data);
         console.log(`Session saved to Firestore: ${summary.sessionId}`);
     },
 
     /**
      * List all saved sessions (metadata only).
      */
-    async list(): Promise<Array<{
+    async list(ownerId: string): Promise<Array<{
         sessionId: string;
         startedAt: number;
         endedAt: number | null;
@@ -46,7 +48,8 @@ export const sessionStore = {
         title: string;
     }>> {
         try {
-            const snapshot = await db.collectionGroup(SESSIONS_COLLECTION)
+            const snapshot = await db.collection(USERS_COLLECTION).doc(ownerId)
+                .collection(SESSIONS_COLLECTION)
                 .orderBy('startedAt', 'desc')
                 .get();
 
@@ -78,15 +81,12 @@ export const sessionStore = {
     /**
      * Get a full session by ID.
      */
-    async get(sessionId: string): Promise<Record<string, any> | null> {
+    async get(ownerId: string, sessionId: string): Promise<Record<string, any> | null> {
         try {
-            const snapshot = await db.collectionGroup(SESSIONS_COLLECTION)
-                .where('sessionId', '==', sessionId)
-                .limit(1)
-                .get();
-            
-            if (snapshot.empty) return null;
-            return snapshot.docs[0].data() as Record<string, any>;
+            const doc = await db.collection(USERS_COLLECTION).doc(ownerId)
+                .collection(SESSIONS_COLLECTION).doc(sessionId).get();
+            if (!doc.exists) return null;
+            return doc.data() as Record<string, any>;
         } catch (err: any) {
             console.error(`Failed to get session ${sessionId}:`, err.message);
             return null;
@@ -96,17 +96,11 @@ export const sessionStore = {
     /**
      * Delete a session by ID.
      */
-    async delete(sessionId: string): Promise<void> {
+    async delete(ownerId: string, sessionId: string): Promise<void> {
         try {
-            const snapshot = await db.collectionGroup(SESSIONS_COLLECTION)
-                .where('sessionId', '==', sessionId)
-                .limit(1)
-                .get();
-            
-            if (!snapshot.empty) {
-                await snapshot.docs[0].ref.delete();
-                console.log(`Session deleted: ${sessionId}`);
-            }
+            await db.collection(USERS_COLLECTION).doc(ownerId)
+                .collection(SESSIONS_COLLECTION).doc(sessionId).delete();
+            console.log(`Session deleted: ${sessionId}`);
         } catch (err: any) {
             console.error(`Failed to delete session ${sessionId}:`, err.message);
         }

@@ -4,6 +4,7 @@ import { projectStore } from './project-store';
 
 export async function streamProjectCoachResponse(
     projectId: string,
+    ownerId: string,
     userMessage: string,
     history: { role: 'user' | 'model'; parts: { text: string }[] }[],
     onChunk: (text: string) => void
@@ -14,10 +15,10 @@ export async function streamProjectCoachResponse(
     });
 
     // Gather Context
-    const project = await projectStore.get(projectId);
-    const materialsContext = await projectStore.getMaterialsContext(projectId);
-    const tasks = await projectStore.listTasks(projectId, 'open');
-    const sessions = await projectStore.listSessions(projectId);
+    const project = await projectStore.get(projectId, ownerId);
+    const materialsContext = await projectStore.getMaterialsContext(projectId, ownerId);
+    const tasks = await projectStore.listTasks(projectId, ownerId, 'open');
+    const sessions = await projectStore.listSessions(projectId, ownerId);
 
     const contextHeader = `
 PROJECT CONTEXT:
