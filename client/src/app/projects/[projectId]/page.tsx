@@ -89,6 +89,17 @@ export default function ProjectDetailPage() {
     const [editTitle, setEditTitle] = useState('');
     const [editDescription, setEditDescription] = useState('');
 
+    const [deleteModal, setDeleteModal] = useState<{
+        isOpen: boolean;
+        type: 'material' | 'session' | null;
+        id: string | null;
+        title?: string;
+    }>({
+        isOpen: false,
+        type: null,
+        id: null
+    });
+
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -172,38 +183,53 @@ export default function ProjectDetailPage() {
         document.body.removeChild(link);
     };
 
-    const handleDeleteMaterial = async (materialId: string) => {
-        if (!confirm('Delete this material?')) return;
-        try {
-            const res = await fetch(`http://localhost:8080/projects/${projectId}/materials/${materialId}`, {
-                method: 'DELETE'
-            });
-            if (res.ok) {
-                setMaterials(prev => prev.filter(m => m.materialId !== materialId));
-            }
-        } catch (err) {
-            console.error('Delete failed:', err);
-        }
+    const handleDeleteMaterial = (materialId: string, filename: string) => {
+        setDeleteModal({
+            isOpen: true,
+            type: 'material',
+            id: materialId,
+            title: filename
+        });
     };
 
-    const handleDeleteSession = async (sessionId: string) => {
-        if (!confirm('Delete this session and all its data? This cannot be undone.')) return;
+    const handleDeleteSession = (sessionId: string, sessionTitle: string) => {
+        setDeleteModal({
+            isOpen: true,
+            type: 'session',
+            id: sessionId,
+            title: sessionTitle
+        });
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteModal.id || !deleteModal.type) return;
+        
         try {
-            const res = await fetch(`http://localhost:8080/projects/${projectId}/sessions/${sessionId}`, {
-                method: 'DELETE'
-            });
-            if (res.ok) {
-                setSessions(prev => prev.filter(s => s.sessionId !== sessionId));
-                // Optionally update project summary stats
-                if (project) {
-                    setProject({
-                        ...project,
-                        sessionCount: Math.max(0, project.sessionCount - 1)
-                    });
+            if (deleteModal.type === 'material') {
+                const res = await fetch(`http://localhost:8080/projects/${projectId}/materials/${deleteModal.id}`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    setMaterials(prev => prev.filter(m => m.materialId !== deleteModal.id));
+                }
+            } else if (deleteModal.type === 'session') {
+                const res = await fetch(`http://localhost:8080/projects/${projectId}/sessions/${deleteModal.id}`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    setSessions(prev => prev.filter(s => s.sessionId !== deleteModal.id));
+                    if (project) {
+                        setProject({
+                            ...project,
+                            sessionCount: Math.max(0, project.sessionCount - 1)
+                        });
+                    }
                 }
             }
         } catch (err) {
             console.error('Delete failed:', err);
+        } finally {
+            setDeleteModal({ isOpen: false, type: null, id: null });
         }
     };
 
@@ -312,18 +338,15 @@ export default function ProjectDetailPage() {
             <div className="bg-white border-b border-neutral-200 pt-10 pb-12 shadow-sm">
                 <div className="max-w-6xl mx-auto px-8">
                     <nav className="flex items-center gap-3 text-neutral-400 mb-8">
-                        <Link href="/projects" className="flex items-center gap-2.5 hover:text-neutral-900 transition-colors group">
-                            <img 
-                                src="/images/aura-ai-logo-dark.svg" 
-                                alt="Aura Logo" 
-                                className="w-5 h-5 rounded-md opacity-80 group-hover:opacity-100 transition-opacity" 
-                            />
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500 group-hover:text-neutral-900">Aura</span>
+                        <Link href="/" className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500 hover:text-neutral-900 transition-colors">
+                            Dashboard
                         </Link>
-                        <ChevronRight className="w-3 h-3 opacity-30" />
-                        <Link href="/projects" className="text-[10px] font-black uppercase tracking-widest hover:text-neutral-900 flex items-center gap-1 transition-colors pt-0.5">
+                        <span className="text-neutral-300 text-[10px] font-medium">/</span>
+                        <Link href="/projects" className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500 hover:text-neutral-900 transition-colors">
                             Projects
                         </Link>
+                        <span className="text-neutral-300 text-[10px] font-medium">/</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">Current Project</span>
                     </nav>
 
                     <div className="flex flex-col md:flex-row justify-between items-center gap-8">
@@ -458,7 +481,7 @@ export default function ProjectDetailPage() {
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        handleDeleteSession(session.sessionId);
+                                                        handleDeleteSession(session.sessionId, session.title);
                                                     }}
                                                     className="p-3 text-neutral-300 hover:text-google-red hover:bg-google-red/5 rounded-2xl transition-all active:scale-95"
                                                     title="Delete Session"
@@ -667,7 +690,7 @@ export default function ProjectDetailPage() {
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    handleDeleteMaterial(material.materialId);
+                                                    handleDeleteMaterial(material.materialId, material.filename);
                                                 }}
                                                 className="w-10 h-10 flex items-center justify-center text-neutral-300 hover:text-google-red hover:bg-google-red/5 rounded-xl transition-all"
                                                 title="Remove Asset"
@@ -812,6 +835,45 @@ export default function ProjectDetailPage() {
                                     className="flex-1 px-6 py-4 bg-neutral-900 text-white rounded-[20px] text-xs font-black uppercase tracking-widest hover:bg-neutral-800 transition-all disabled:opacity-50"
                                 >
                                     Save Changes
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Deletion Confirmation Modal */}
+            {deleteModal.isOpen && (
+                <div 
+                    onClick={() => setDeleteModal({ isOpen: false, type: null, id: null })}
+                    className="fixed inset-0 bg-neutral-900/40 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300 cursor-pointer"
+                >
+                    <div 
+                        onClick={(e) => e.stopPropagation()}
+                        className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 border border-neutral-200/50 cursor-default"
+                    >
+                        <div className="p-10 text-center">
+                            <div className="w-20 h-20 bg-google-red/10 rounded-[28px] flex items-center justify-center mx-auto mb-8 shadow-inner border border-google-red/5 text-google-red">
+                                <Trash2 className="w-9 h-9" />
+                            </div>
+                            
+                            <h2 className="text-xl font-black text-neutral-900 mb-3 tracking-tight uppercase">Are you sure?</h2>
+                            <p className="text-sm text-neutral-500 mb-10 font-medium leading-relaxed">
+                                You are about to permanently remove <span className="text-neutral-900 font-black">"{deleteModal.title}"</span>. This action cannot be undone.
+                            </p>
+
+                            <div className="flex flex-col gap-3">
+                                <button
+                                    onClick={confirmDelete}
+                                    className="w-full py-4 bg-neutral-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-google-red hover:shadow-xl transition-all"
+                                >
+                                    Confirm Deletion
+                                </button>
+                                <button
+                                    onClick={() => setDeleteModal({ isOpen: false, type: null, id: null })}
+                                    className="w-full py-4 text-neutral-400 text-[10px] font-black uppercase tracking-[0.2em] hover:text-neutral-900 transition-colors"
+                                >
+                                    Go Back
                                 </button>
                             </div>
                         </div>

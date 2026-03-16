@@ -31,7 +31,7 @@ export default function Sidebar() {
 
             {/* Header / Logo */}
             <div className={`h-24 flex items-center border-b border-neutral-200 overflow-hidden transition-all duration-500 ${isCollapsed ? 'px-4' : 'px-6'}`}>
-                <div className="flex items-center gap-3 min-w-max">
+                <Link href="/" className="flex items-center gap-3 min-w-max cursor-pointer">
                     <div className="w-10 h-10 rounded-[12px] overflow-hidden shrink-0 shadow-sm border border-neutral-200/50">
                         <img src="/images/aura-ai-logo-dark.svg?v=2" alt="Aura Logo" className="w-full h-full object-cover" />
                     </div>
@@ -43,7 +43,7 @@ export default function Sidebar() {
                             Your AI Mentor
                         </span>
                     </div>
-                </div>
+                </Link>
             </div>
 
             {/* Navigation */}

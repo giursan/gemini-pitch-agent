@@ -82,93 +82,114 @@ export default function ProjectsPage() {
     };
 
     return (
-        <div className="min-h-screen bg-[#F8F9FA] p-8">
-            <div className="max-w-6xl mx-auto">
-                <header className="flex justify-between items-end mb-10">
-                    <div>
-                        <div className="flex items-center gap-2 text-google-blue mb-2">
-                            <Link href="/" className="text-sm font-medium hover:underline">Dashboard</Link>
-                            <ChevronRight className="w-4 h-4 text-neutral-400" />
-                            <span className="text-sm font-medium text-neutral-400">Projects</span>
+        <div className="min-h-screen bg-[#F8F9FA] pb-20">
+            {/* Platform Header Strip */}
+            <header className="bg-white border-b border-neutral-200 pt-10 pb-12 shadow-sm mb-12">
+                <div className="max-w-6xl mx-auto px-8">
+                    <nav className="flex items-center gap-3 text-neutral-400 mb-8">
+                        <Link href="/" className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500 hover:text-neutral-900 transition-colors">
+                            Dashboard
+                        </Link>
+                        <span className="text-neutral-300 text-[10px] font-medium">/</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400 pt-0.5">Projects</span>
+                    </nav>
+
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-3xl font-black text-neutral-900 tracking-tight leading-tight">Your Projects</h1>
+                            <p className="text-sm text-neutral-500 mt-1 font-medium max-w-md">
+                                Manage your pitch preparations and materials.
+                            </p>
                         </div>
-                        <h1 className="text-3xl font-extrabold text-neutral-900 tracking-tight">Your Projects</h1>
-                        <p className="text-neutral-500 mt-2">Manage your pitch preparations and materials.</p>
+
+                        <button
+                            onClick={() => setIsCreateModalOpen(true)}
+                            className="flex items-center gap-3 px-8 py-4 rounded-full text-[10px] font-black bg-neutral-900 text-white shadow-xl shadow-neutral-900/20 hover:scale-[1.05] hover:bg-neutral-800 transition-all uppercase tracking-[0.2em]"
+                        >
+                            <Plus className="w-4 h-4" />
+                            NEW PROJECT
+                        </button>
                     </div>
+                </div>
+            </header>
 
-                    <button
-                        onClick={() => setIsCreateModalOpen(true)}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-google-blue text-white rounded-full text-sm font-bold shadow-lg shadow-google-blue/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
-                    >
-                        <Plus className="w-5 h-5" />
-                        Create New Project
-                    </button>
-                </header>
-
+            <div className="max-w-6xl mx-auto px-8">
                 {isLoading ? (
-                    <div className="flex justify-center p-20">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-google-blue"></div>
+                    <div className="flex flex-col items-center justify-center p-20 gap-4">
+                        <div className="relative">
+                            <div className="absolute inset-0 bg-neutral-900/10 blur-2xl rounded-full scale-150 animate-pulse"></div>
+                            <img src="/images/aura-ai-logo-dark.svg?v=2" alt="Loading" className="w-16 h-16 rounded-2xl shadow-xl relative z-10 animate-pulse" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-[0.3em] text-neutral-400">Loading Projects</span>
                     </div>
                 ) : projects.length === 0 ? (
-                    <div className="bg-white rounded-2xl border border-neutral-200 border-dashed p-16 text-center shadow-sm">
-                        <div className="w-20 h-20 bg-neutral-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <Folder className="w-10 h-10 text-neutral-300" />
+                    <div className="bg-white rounded-[3rem] border border-dashed border-neutral-200 p-24 text-center shadow-sm">
+                        <div className="w-20 h-20 bg-neutral-50 rounded-[28px] flex items-center justify-center mx-auto mb-8 shadow-inner border border-neutral-100">
+                            <Folder className="w-10 h-10 text-neutral-200" />
                         </div>
-                        <h3 className="text-lg font-bold text-neutral-900 mb-2">No projects yet</h3>
-                        <p className="text-neutral-500 max-w-sm mx-auto mb-8">
+                        <h3 className="text-xl font-bold text-neutral-900 mb-2">No projects yet</h3>
+                        <p className="text-sm text-neutral-400 mb-10 max-w-sm mx-auto font-medium leading-relaxed">
                             Organize your sessions by project. Each project can have its own materials and goals.
                         </p>
                         <button
                             onClick={() => setIsCreateModalOpen(true)}
-                            className="text-google-blue font-bold px-6 py-2 border-2 border-google-blue rounded-full hover:bg-google-blue hover:text-white transition-all"
+                            className="inline-flex items-center gap-3 px-10 py-4 bg-neutral-900 text-white rounded-2xl text-[10px] font-black hover:bg-neutral-800 hover:shadow-2xl hover:scale-[1.02] transition-all uppercase tracking-[0.2em]"
                         >
-                            Start First Project
+                            START FIRST PROJECT
                         </button>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {projects.map(project => (
-                            <Link
-                                href={`/projects/${project.projectId}`}
-                                key={project.projectId}
-                                className="group bg-white rounded-2xl border border-neutral-200 p-6 shadow-sm hover:shadow-xl hover:border-google-blue/30 transition-all duration-300"
-                            >
-                                <div className="flex justify-between items-start mb-4">
-                                    <div className="w-12 h-12 bg-google-blue/5 rounded-xl flex items-center justify-center text-google-blue group-hover:bg-google-blue group-hover:text-white transition-colors">
-                                        <Folder className="w-6 h-6" />
-                                    </div>
-                                    {project.latestScore && (
-                                        <div className="text-right">
-                                            <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Latest</p>
-                                            <p className="text-xl font-black text-google-green leading-tight">{project.latestScore}</p>
+                    <>
+                        <div className="flex items-center justify-between mb-8">
+                            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-400 flex items-center gap-2">
+                                <Folder className="w-3.5 h-3.5 text-neutral-900" />
+                                {projects.length} {projects.length === 1 ? 'Project' : 'Projects'}
+                            </h3>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {projects.map(project => (
+                                <Link
+                                    href={`/projects/${project.projectId}`}
+                                    key={project.projectId}
+                                    className="group bg-white rounded-[2rem] border border-neutral-200/60 p-8 shadow-sm hover:shadow-xl hover:border-neutral-900/20 hover:-translate-y-1 transition-all duration-500"
+                                >
+                                    <div className="flex justify-between items-start mb-6">
+                                        <div className="w-14 h-14 bg-neutral-50 rounded-xl flex items-center justify-center text-neutral-400 group-hover:bg-neutral-900 group-hover:text-white transition-all duration-500 group-hover:rotate-6 group-hover:scale-110">
+                                            <Folder className="w-7 h-7" />
                                         </div>
-                                    )}
-                                </div>
+                                        {project.latestScore && (
+                                            <div className="text-right">
+                                                <p className="text-[9px] font-black text-neutral-400 uppercase tracking-widest">Latest</p>
+                                                <p className={`text-2xl font-black leading-tight ${project.latestScore >= 80 ? 'text-google-green' : project.latestScore >= 60 ? 'text-google-blue' : 'text-google-red'}`}>
+                                                    {project.latestScore}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
 
-                                <h3 className="text-xl font-bold text-neutral-900 mb-2 truncate group-hover:text-google-blue transition-colors">
-                                    {project.title}
-                                </h3>
-                                <p className="text-sm text-neutral-500 line-clamp-2 mb-6 min-h-[40px]">
-                                    {project.description || 'No description provided.'}
-                                </p>
+                                    <h3 className="text-xl font-black text-neutral-900 mb-2 truncate tracking-tight group-hover:text-neutral-800 transition-colors">
+                                        {project.title}
+                                    </h3>
+                                    <p className="text-sm text-neutral-500 line-clamp-2 mb-8 min-h-[40px] font-medium leading-relaxed">
+                                        {project.description || 'No description provided.'}
+                                    </p>
 
-                                <div className="flex items-center justify-between pt-4 border-t border-neutral-100">
-                                    <div className="flex gap-4">
-                                        <div className="flex items-center gap-1.5 text-neutral-400">
-                                            <Video className="w-3.5 h-3.5" />
-                                            <span className="text-xs font-bold">{project.sessionCount}</span>
-                                        </div>
-                                        <div className="flex items-center gap-1.5 text-neutral-400">
-                                            <BarChart2 className="w-3.5 h-3.5" />
-                                            <span className="text-xs font-bold">{project.bestScore || 0}</span>
+                                    <div className="flex items-center justify-between pt-5 border-t border-neutral-100">
+                                        <div className="flex gap-5">
+                                            <div className="flex items-center gap-1.5 text-neutral-400">
+                                                <Video className="w-3.5 h-3.5" />
+                                                <span className="text-[10px] font-black">{project.sessionCount}</span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 text-neutral-400">
+                                                <BarChart2 className="w-3.5 h-3.5" />
+                                                <span className="text-[10px] font-black">{project.bestScore || 0}</span>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-1 text-google-blue text-xs font-black invisible group-hover:visible translate-x-1 group-hover:translate-x-0 transition-all">
-                                        OPEN <ArrowRight className="w-3 h-3" />
-                                    </div>
-                                </div>
-                            </Link>
-                        ))}
-                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    </>
                 )}
             </div>
 
