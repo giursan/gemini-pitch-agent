@@ -40,7 +40,12 @@ export default function ProjectsPage() {
         try {
             const res = await fetch('http://localhost:8080/projects');
             const data = await res.json();
-            setProjects(data);
+            if (Array.isArray(data)) {
+                setProjects(data);
+            } else {
+                console.error('Projects data is not an array:', data);
+                setProjects([]);
+            }
         } catch (err) {
             console.error('Failed to fetch projects:', err);
         } finally {

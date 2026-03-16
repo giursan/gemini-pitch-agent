@@ -77,6 +77,7 @@ export class DeliveryAgent {
         this.sessionId = sessionId;
         this.feedbackMode = feedbackMode;
         this.enableSpeech = enableSpeech;
+        this.startedAt = Date.now();
     }
 
     /** Register callback for delivery reports (pacing, filler, transcript) */
