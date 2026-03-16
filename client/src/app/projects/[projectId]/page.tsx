@@ -338,54 +338,17 @@ export default function ProjectDetailPage() {
                                     />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    {isEditing ? (
-                                        <div className="space-y-3">
-                                            <input
-                                                type="text"
-                                                value={editTitle}
-                                                onChange={(e) => setEditTitle(e.target.value)}
-                                                className="w-full text-3xl font-black text-neutral-900 tracking-tight bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 focus:outline-none focus:border-neutral-900/40 transition-all"
-                                                placeholder="Project Title"
-                                                autoFocus
-                                            />
-                                            <textarea
-                                                value={editDescription}
-                                                onChange={(e) => setEditDescription(e.target.value)}
-                                                className="w-full text-sm text-neutral-500 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-2 focus:outline-none focus:border-neutral-900/40 transition-all min-h-[80px] resize-none"
-                                                placeholder="Project Description"
-                                            />
-                                            <div className="flex items-center gap-2">
-                                                <button
-                                                    onClick={handleUpdateProject}
-                                                    className="flex items-center gap-2 px-4 py-2 bg-neutral-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-neutral-800 active:scale-95 transition-all shadow-lg shadow-neutral-900/10"
-                                                >
-                                                    <Save className="w-3.5 h-3.5" /> Save Changes
-                                                </button>
-                                                <button
-                                                    onClick={() => {
-                                                        setEditTitle(project.title);
-                                                        setEditDescription(project.description || '');
-                                                        setIsEditing(false);
-                                                    }}
-                                                    className="flex items-center gap-2 px-4 py-2 bg-white text-neutral-400 border border-neutral-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:text-neutral-900 hover:border-neutral-900 transition-all active:scale-95"
-                                                >
-                                                    <X className="w-3.5 h-3.5" /> Cancel
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="group relative pr-10">
-                                            <h1 className="text-3xl font-black text-neutral-900 tracking-tight leading-tight mb-1">{project.title}</h1>
-                                            <p className="text-neutral-500 text-sm font-medium max-w-2xl leading-relaxed">{project.description || 'Manage your pitch preparation materials and practice sessions.'}</p>
-                                            <button 
-                                                onClick={() => setIsEditing(true)}
-                                                className="absolute top-1 -right-2 p-2 text-neutral-300 hover:text-neutral-900 hover:bg-neutral-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                                                title="Edit Metadata"
-                                            >
-                                                <Edit2 className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    )}
+                                    <div className="group relative pr-10">
+                                        <h1 className="text-3xl font-black text-neutral-900 tracking-tight leading-tight mb-1">{project.title}</h1>
+                                        <p className="text-neutral-500 text-sm font-medium max-w-2xl leading-relaxed">{project.description || 'Manage your pitch preparation materials and practice sessions.'}</p>
+                                        <button 
+                                            onClick={() => setIsEditing(true)}
+                                            className="absolute top-1 -right-2 p-2 text-neutral-300 hover:text-neutral-900 hover:bg-neutral-50 rounded-lg transition-all"
+                                            title="Edit Metadata"
+                                        >
+                                            <Edit2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -796,6 +759,61 @@ export default function ProjectDetailPage() {
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Edit Metadata Modal */}
+            {isEditing && project && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-white/80 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white border border-neutral-200 rounded-[32px] w-full max-w-md shadow-2xl shadow-neutral-900/10 p-8 animate-in zoom-in-95 duration-200">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-xl font-black text-neutral-900">Edit Project</h3>
+                            <button 
+                                onClick={() => setIsEditing(false)}
+                                className="p-2 text-neutral-400 hover:text-neutral-900 transition-colors"
+                            >
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+
+                        <div className="space-y-6">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase text-neutral-400 tracking-widest">Project Title</label>
+                                <input
+                                    type="text"
+                                    value={editTitle}
+                                    onChange={(e) => setEditTitle(e.target.value)}
+                                    className="w-full bg-neutral-50 border border-neutral-200 rounded-2xl px-5 py-3 text-neutral-900 focus:outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900/10 transition-all"
+                                    placeholder="Enter project title..."
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase text-neutral-400 tracking-widest">Description</label>
+                                <textarea
+                                    value={editDescription}
+                                    onChange={(e) => setEditDescription(e.target.value)}
+                                    className="w-full bg-neutral-50 border border-neutral-200 rounded-2xl px-5 py-3 text-neutral-900 focus:outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900/10 transition-all min-h-[120px] resize-none"
+                                    placeholder="Enter project description..."
+                                />
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    onClick={() => setIsEditing(false)}
+                                    className="flex-1 px-6 py-4 bg-white border border-neutral-200 text-neutral-400 rounded-[20px] text-xs font-black uppercase tracking-widest hover:text-neutral-900 hover:border-neutral-900 transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleUpdateProject}
+                                    disabled={!editTitle.trim()}
+                                    className="flex-1 px-6 py-4 bg-neutral-900 text-white rounded-[20px] text-xs font-black uppercase tracking-widest hover:bg-neutral-800 transition-all disabled:opacity-50"
+                                >
+                                    Save Changes
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

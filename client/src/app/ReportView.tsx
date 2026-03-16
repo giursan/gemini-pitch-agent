@@ -1,7 +1,8 @@
 'use client';
 
-import { Eye, User, Hand, Mic, FileText, BarChart2, Check, ArrowUp, Lightbulb, Target, Award, List } from 'lucide-react';
+import { Eye, User, Hand, Mic, FileText, BarChart2, Check, ArrowUp, Lightbulb, Target, Award, List, ChevronLeft } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import Link from 'next/link';
 
 interface ReportViewProps {
     report: Record<string, any>;
@@ -43,6 +44,17 @@ export default function ReportView({ report, sessionId, onNewSession }: ReportVi
     return (
         <div className="min-h-screen bg-background text-foreground font-sans">
             <div className="max-w-5xl mx-auto px-8 py-12">
+                {/* Back Link */}
+                {report.projectId && (
+                    <Link 
+                        href={`/projects/${report.projectId}`}
+                        className="flex items-center gap-1.5 text-xs font-bold text-neutral-400 uppercase tracking-widest hover:text-neutral-900 transition-colors mb-8 group w-fit"
+                    >
+                        <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+                        Back to Project Dashboard
+                    </Link>
+                )}
+
                 {/* Header */}
                 <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-12 gap-6">
                     <div className="flex items-center gap-4">

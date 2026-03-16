@@ -343,15 +343,16 @@ wss.on('connection', (ws: WebSocket) => {
                     break;
                 }
 
-                case 'session_qa': {
-                    isPaused = false;
-                    orchestrator?.startQA();
-                    ws.send(JSON.stringify({ type: 'session_qa_started' }));
-                    break;
-                }
+
 
                 case 'session_end': {
                     if (!orchestrator) break;
+
+                    // Allow updating project ID at the very end (e.g. from quick session)
+                    if (data.projectId) {
+                        currentProjectId = data.projectId;
+                        orchestrator.updateConfig({ projectId: data.projectId });
+                    }
 
                     // Grab the summary before stopping
                     const summary = orchestrator.getSessionSummary();
@@ -401,6 +402,7 @@ wss.on('connection', (ws: WebSocket) => {
                     ws.send(JSON.stringify({
                         type: 'session_report',
                         sessionId: summary.sessionId,
+                        projectId: currentProjectId,
                         report,
                     }));
 

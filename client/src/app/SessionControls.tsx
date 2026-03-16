@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { EyeOff, Volume2, MonitorPlay, Settings2, X, ChevronDown, ChevronUp } from 'lucide-react';
 
-export type SessionState = 'idle' | 'recording' | 'paused' | 'generating' | 'report' | 'qa';
+export type SessionState = 'idle' | 'recording' | 'paused' | 'generating' | 'report';
 export type FeedbackMode = 'silent' | 'loud';
 export type Persona = 'mentor' | 'evaluator' | 'shark' | 'basic';
 
@@ -30,10 +30,9 @@ interface SessionControlsProps {
     onPause: () => void;
     onResume: () => void;
     onEnd: () => void;
-    onQA: () => void;
 }
 
-export default function SessionControls({ state, onStart, onPause, onResume, onEnd, onQA }: SessionControlsProps) {
+export default function SessionControls({ state, onStart, onPause, onResume, onEnd }: SessionControlsProps) {
     const [feedbackMode, setFeedbackMode] = useState<FeedbackMode>('silent');
     const [persona, setPersona] = useState<Persona>('mentor');
     const [agents, setAgents] = useState<AgentSelection>({
@@ -95,7 +94,7 @@ export default function SessionControls({ state, onStart, onPause, onResume, onE
                 </button>
             )}
 
-            {(state === 'recording' || state === 'qa') && (
+            {state === 'recording' && (
                 <div className="flex items-center gap-2">
                     {state === 'recording' && (
                         <>
@@ -111,21 +110,7 @@ export default function SessionControls({ state, onStart, onPause, onResume, onE
                             >
                                 Stop
                             </button>
-                            <button
-                                onClick={onQA}
-                                className="google-button px-6 py-2.5 rounded-lg text-sm font-bold bg-google-yellow text-neutral-900 shadow-lg shadow-google-yellow/25 hover:opacity-90 active:scale-[0.98] transition-all bg-[#F9AB00]"
-                            >
-                                Start Live Q&A
-                            </button>
                         </>
-                    )}
-                    {state === 'qa' && (
-                        <button
-                            onClick={onEnd}
-                            className="google-button px-8 py-2.5 rounded-lg text-sm font-bold bg-google-red text-white shadow-lg shadow-google-red/25 hover:opacity-90 active:scale-[0.98] transition-all"
-                        >
-                            End Q&A & Generate Report
-                        </button>
                     )}
                 </div>
             )}

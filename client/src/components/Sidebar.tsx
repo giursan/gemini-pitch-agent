@@ -13,7 +13,6 @@ export default function Sidebar() {
         { name: 'Dashboard', href: '/', icon: Home },
         { name: 'Practice Space', href: '/practice', icon: Video },
         { name: 'Session History', href: '/history', icon: History },
-        { name: 'TED Benchmarks', href: '/profiler', icon: Activity },
     ];
 
     return (

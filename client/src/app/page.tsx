@@ -102,7 +102,7 @@ export default function DashboardPage() {
             </header>
 
             <div className="max-w-6xl mx-auto px-8">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-20 animate-fade-in-up">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-20 animate-fade-in-up">
                 <div className="glass-card p-8 rounded-[2rem] flex flex-col items-start gap-5 hover:-translate-y-2 transition-all duration-500 blue-glow-hover group animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
                     <div className="w-16 h-16 bg-google-blue/10 rounded-xl flex items-center justify-center text-google-blue group-hover:bg-google-blue group-hover:text-white transition-all duration-500 group-hover:rotate-6 group-hover:scale-110">
                         <Folder className="w-8 h-8" />
@@ -129,21 +129,9 @@ export default function DashboardPage() {
                     </Link>
                 </div>
 
-                <div className="glass-card p-8 rounded-[2rem] flex flex-col items-start gap-5 hover:-translate-y-2 transition-all duration-500 purple-glow-hover group animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
-                    <div className="w-16 h-16 bg-google-purple/10 rounded-xl flex items-center justify-center text-google-purple group-hover:bg-google-purple group-hover:text-white transition-all duration-500 group-hover:rotate-12 group-hover:scale-110">
-                        <Activity className="w-8 h-8" />
-                    </div>
-                    <div>
-                        <h3 className="text-xl font-black text-neutral-900 tracking-tight">Skill Profiler</h3>
-                        <p className="text-sm text-neutral-600 mt-3 leading-relaxed font-medium">Benchmark your delivery against curated TED talk empirical data benchmarks.</p>
-                    </div>
-                    <Link href="/profiler" className="mt-auto pt-8 text-google-purple text-[10px] font-bold uppercase tracking-[0.2em] hover:underline flex items-center gap-2 transition-all group-hover:translate-x-1.5">
-                        VIEW PROFILER <ArrowRight className="w-4 h-4" />
-                    </Link>
                 </div>
-            </div>
 
-            <section className="animate-fade-in-up" style={{ animationDelay: '0.4s' }}>
+            <section className="animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
                 <div className="flex items-end justify-between mb-10">
                     <div>
                         <h2 className="text-2xl font-black text-neutral-900 tracking-tight leading-tight">Performance Insights</h2>
@@ -161,7 +149,7 @@ export default function DashboardPage() {
                 ) : recentProjects.length === 0 ? (
                     <div className="glass-card rounded-[3rem] p-24 text-center border-dashed border-2 border-neutral-200/50">
                         <div className="w-20 h-20 bg-neutral-50 rounded-[28px] flex items-center justify-center mx-auto mb-8 shadow-inner border border-neutral-100">
-                            <Activity className="w-10 h-10 text-neutral-200" />
+                            <Video className="w-10 h-10 text-neutral-200" />
                         </div>
                         <h3 className="text-xl font-bold text-neutral-900 mb-2">Initialize your baseline</h3>
                         <p className="text-sm text-neutral-400 mb-10 max-w-sm mx-auto font-medium leading-relaxed">Your performance analytics will populate here once you've completed your first practice sessions.</p>
@@ -174,7 +162,7 @@ export default function DashboardPage() {
                         {/* The Insights Section */}
                         <div className="lg:col-span-8 bg-white border border-neutral-200/60 rounded-[3rem] p-10 shadow-sm relative overflow-hidden group/chart">
                             <div className="absolute top-0 right-0 p-8 opacity-[0.03] scale-150 rotate-12 group-hover/chart:rotate-0 transition-transform duration-700">
-                                <Activity className="w-32 h-32" />
+                                <Video className="w-32 h-32" />
                             </div>
 
                             <div className="flex items-center justify-between mb-8">

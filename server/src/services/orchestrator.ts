@@ -94,7 +94,7 @@ CONTEXT:
 
 export class Orchestrator {
     private analystAgent: DeliveryAgent; // The "Ear" (Transcription/Metrics)
-    private coachAgent: DeliveryAgent;   // The "Voice" (Persona/Q&A)
+    private coachAgent: DeliveryAgent;   // The "Voice" (Persona)
     private contentAgent: ContentAgent;  // The "Brain" (Batch Analysis)
     private cvEvaluator: CvEvaluator;
     private ws: WebSocket;
@@ -181,6 +181,10 @@ export class Orchestrator {
         this.coachAgent.setOnRawMessage((msg) => this.handleRawGeminiMessage(msg));
     }
 
+    public updateConfig(newConfig: Partial<OrchestratorConfig>) {
+        this.config = { ...this.config, ...newConfig };
+    }
+
     /**
      * Start the orchestrator: connect the Delivery Agent and start periodic analysis.
      */
@@ -225,39 +229,7 @@ export class Orchestrator {
         }, Orchestrator.METRICS_EMIT_INTERVAL_MS);
     }
 
-    /**
-     * Trigger Phase 2: Live Q&A Grill.
-     * Uses the Live API to inject a brutal question based on content.
-     */
-    async startQA(): Promise<void> {
-        console.log(`[Orchestrator:${this.config.sessionId}] Starting Live Q&A Grill Phase...`);
-        this.logEvent('system', { message: 'Transitioning to Phase 2: Live Q&A' });
 
-        // Stop the background analytics loops
-        if (this.contentAnalysisInterval) clearInterval(this.contentAnalysisInterval);
-        if (this.metricsInterval) clearInterval(this.metricsInterval);
-
-        // Get the juiciest contradiction to ask about
-        const assessment = this.contentAgent.getLastAssessment();
-        let contradictionPrompt = '';
-        if (assessment.contradictions && assessment.contradictions.length > 0) {
-            contradictionPrompt = `Ask them immediately about this specific contradiction from their pitch: "${assessment.contradictions[0]}"`;
-        } else {
-            contradictionPrompt = `Ask them a very difficult question about the weakest part of their argument.`;
-        }
-
-        // We use the coachAgent's Live API connection to become the talking persona
-        // Note: Q&A can only work if the coach is connected (Loud Mode).
-        if (this.config.feedbackMode === 'loud') {
-            const qaPrompt = `The presenter just finished their pitch and requested a Q&A session. 
-You are now acting as the ${this.config.persona} persona.
-Switch from being a silent observer to a LOUD, active participant.
-${contradictionPrompt}
-Be very brief (1-2 sentences max) and wait for them to answer.`;
-            
-            this.coachAgent.injectCoachingDirective(qaPrompt);
-        }
-    }
 
     // ── Input Handlers ──────────────────────────────────────────────────────
 

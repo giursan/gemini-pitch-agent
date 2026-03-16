@@ -20,7 +20,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Aura | AI Presentation Mentor",
-  description: "Master your pitch with real-time multi-agent feedback and TED benchmarks.",
+  description: "Master your pitch with real-time multi-agent feedback.",
 };
 
 export default function RootLayout({
