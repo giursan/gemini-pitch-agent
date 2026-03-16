@@ -85,7 +85,7 @@ export default function DashboardPage() {
                     <div>
                         <h1 className="text-3xl font-black text-neutral-900 tracking-tight leading-tight">{greeting}</h1>
                         <p className="text-sm text-neutral-500 mt-1 font-medium max-w-md">
-                            Ready to perfect your pitch today?
+                            Ready to perfect your pitch today? <Link href="/how-it-works" className="text-primary hover:underline ml-1">Learn how it works</Link>
                         </p>
                     </div>
 

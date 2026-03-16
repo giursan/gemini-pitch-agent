@@ -25,9 +25,9 @@ const FM = {
     CHIN: 152,
 } as const;
 
-// ─── TED Talk Benchmarks ───────────────────────────────────────────────────────
-export const TED_BENCHMARKS = {
-    /** Top TED speakers: ~26 gestures/min (465 in 18 min) */
+// ─── Practice Benchmarks ───────────────────────────────────────────────────────
+export const PRACTICE_BENCHMARKS = {
+    /** Target: ~26 gestures/min for high engagement */
     gesturesPerMin: 26,
     /** Ideal eye contact when speaking: 50-70% */
     eyeContactPct: 0.65,
@@ -35,7 +35,7 @@ export const TED_BENCHMARKS = {
     idealPostureAngle: 165,
     /** Slouch threshold */
     slouchAngle: 145,
-    /** Hand visibility: top speakers show hands >80% of time */
+    /** Hand visibility target: >80% of time */
     handVisibilityPct: 0.80,
     /** Smile benchmark (relative width, normalized) */
     smileWidth: 0.35,
@@ -366,13 +366,13 @@ export function useBodyLanguageAnalysis(
                 ? handVisibleCountRef.current / totalFrameCountRef.current
                 : 1;
 
-            const targetAngle = baseline ? Math.max(baseline.idealAngle - 15, TED_BENCHMARKS.slouchAngle - 10) : TED_BENCHMARKS.slouchAngle;
+            const targetAngle = baseline ? Math.max(baseline.idealAngle - 15, PRACTICE_BENCHMARKS.slouchAngle - 10) : PRACTICE_BENCHMARKS.slouchAngle;
             const isGoodPosture = postureAngle > targetAngle;
 
             // ── Composite score (0–100) ────────────────────────────────────
-            const postureScore = Math.min(1, postureAngle / TED_BENCHMARKS.idealPostureAngle);
-            const gestureScore = Math.min(1, gesturesPerMin / TED_BENCHMARKS.gesturesPerMin);
-            const handVisScore = Math.min(1, handVisibility / TED_BENCHMARKS.handVisibilityPct);
+            const postureScore = Math.min(1, postureAngle / PRACTICE_BENCHMARKS.idealPostureAngle);
+            const gestureScore = Math.min(1, gesturesPerMin / PRACTICE_BENCHMARKS.gesturesPerMin);
+            const handVisScore = Math.min(1, handVisibility / PRACTICE_BENCHMARKS.handVisibilityPct);
 
             // Hand energy estimate for telemetry
             const recentVelocities = windowSamples.map(s => 
@@ -412,5 +412,5 @@ export function useBodyLanguageAnalysis(
     // Reset counters when disabled
     // Removed auto-reset when disabled to allow metrics freezing during pause
 
-    return { metrics, benchmarks: TED_BENCHMARKS };
+    return { metrics, benchmarks: PRACTICE_BENCHMARKS };
 }

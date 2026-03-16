@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Video, History, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Home, Video, Activity, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
 
 export default function Sidebar() {
     const pathname = usePathname();
@@ -12,7 +12,7 @@ export default function Sidebar() {
     const navItems = [
         { name: 'Dashboard', href: '/', icon: Home },
         { name: 'Practice Space', href: '/practice', icon: Video },
-        { name: 'Session History', href: '/history', icon: History },
+        { name: 'How it works', href: '/how-it-works', icon: HelpCircle },
     ];
 
     return (

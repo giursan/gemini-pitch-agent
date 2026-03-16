@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as cam from '@mediapipe/camera_utils';
 import type { FaceMesh as FaceMeshType, Results } from '@mediapipe/face_mesh';
 import type { HandResult } from './useGestureRecognizer';
-import { LM, angleBetween, TED_BENCHMARKS, type PostureBaseline } from './useBodyLanguageAnalysis';
+import { LM, angleBetween, PRACTICE_BENCHMARKS, type PostureBaseline } from './useBodyLanguageAnalysis';
 
 /** Raw landmarks exposed each frame for downstream analysis hooks */
 export interface BodyLandmarks {
@@ -290,7 +290,7 @@ export function useEyeContact(
                     };
 
                     const angle = Math.round(angleBetween(earMid, shoulderMid, hipMid));
-                    const targetAngle = baseline ? Math.max(baseline.idealAngle - 15, TED_BENCHMARKS.slouchAngle - 10) : TED_BENCHMARKS.slouchAngle;
+                    const targetAngle = baseline ? Math.max(baseline.idealAngle - 15, PRACTICE_BENCHMARKS.slouchAngle - 10) : PRACTICE_BENCHMARKS.slouchAngle;
                     const isGood = angle > targetAngle;
 
                     // Draw points
