@@ -30,6 +30,7 @@ export interface GestureMetrics {
     openGestureRatio: number;
     closedGestureRatio: number;
     isReady: boolean;
+    velocity: number;
 }
 
 const DEFAULT_METRICS: GestureMetrics = {
@@ -40,6 +41,7 @@ const DEFAULT_METRICS: GestureMetrics = {
     openGestureRatio: 0,
     closedGestureRatio: 0,
     isReady: false,
+    velocity: 0,
 };
 
 const OPEN_GESTURES = new Set(['Open_Palm', 'Victory', 'ILoveYou', 'Thumb_Up', 'Pointing_Up']);
@@ -64,6 +66,11 @@ export function useGestureRecognizer(
     const isProcessingRef = useRef(false);
     const consecutiveErrorsRef = useRef(0);
     const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+    // State for tracking variety and energy
+    const lastWristPositionsRef = useRef<Record<string, HandLandmark>>({});
+    const lastGesturesRef = useRef<Record<string, string>>({});
+    const velocitiesRef = useRef<number[]>([]);
 
     useEffect(() => {
         if (!enabled || typeof window === 'undefined') return;
@@ -192,14 +199,8 @@ export function useGestureRecognizer(
                                 for (let i = 0; i < result.gestures.length; i++) {
                                     const gestureList = result.gestures[i];
                                     const handedness = result.handednesses?.[i]?.[0]?.categoryName || 'Unknown';
-
-                                    const landmarks: HandLandmark[] = result.landmarks?.[i]?.map((lm: any) => ({
-                                        x: lm.x, y: lm.y, z: lm.z,
-                                    })) || [];
-
-                                    const worldLandmarks: HandLandmark[] = result.worldLandmarks?.[i]?.map((lm: any) => ({
-                                        x: lm.x, y: lm.y, z: lm.z,
-                                    })) || [];
+                                    const landmarks: HandLandmark[] = result.landmarks?.[i] || [];
+                                    const worldLandmarks: HandLandmark[] = result.worldLandmarks?.[i] || [];
 
                                     if (gestureList.length > 0) {
                                         const top = gestureList[0];
@@ -215,7 +216,25 @@ export function useGestureRecognizer(
                                             handedness,
                                         });
 
-                                        countsRef.current[name] = (countsRef.current[name] || 0) + 1;
+                                        // ── Velocity / Energy Tracking ──
+                                        const wrist = landmarks[0];
+                                        const prevWrist = lastWristPositionsRef.current[handedness];
+                                        if (wrist && prevWrist) {
+                                            const dx = wrist.x - prevWrist.x;
+                                            const dy = wrist.y - prevWrist.y;
+                                            const v = Math.sqrt(dx * dx + dy * dy);
+                                            velocitiesRef.current.push(v);
+                                            if (velocitiesRef.current.length > 20) velocitiesRef.current.shift();
+                                        }
+                                        lastWristPositionsRef.current[handedness] = wrist;
+
+                                        // ── Stateful Gesture Counting ──
+                                        const prevGesture = lastGesturesRef.current[handedness];
+                                        if (name !== 'None' && name !== prevGesture && confidence > 0.6) {
+                                            countsRef.current[name] = (countsRef.current[name] || 0) + 1;
+                                        }
+                                        lastGesturesRef.current[handedness] = name;
+
                                         if (OPEN_GESTURES.has(name)) hasOpen = true;
                                         if (CLOSED_GESTURES.has(name)) hasClosed = true;
                                     }
@@ -227,6 +246,10 @@ export function useGestureRecognizer(
                             if (hasOpen) openFramesRef.current++;
                             if (hasClosed) closedFramesRef.current++;
 
+                            const avgV = velocitiesRef.current.length > 0 
+                                ? velocitiesRef.current.reduce((a: number, b: number) => a + b, 0) / velocitiesRef.current.length 
+                                : 0;
+
                             const total = totalFramesRef.current || 1;
                             setMetrics({
                                 currentGestures: gestures,
@@ -236,6 +259,7 @@ export function useGestureRecognizer(
                                 openGestureRatio: Math.round((openFramesRef.current / total) * 100) / 100,
                                 closedGestureRatio: Math.round((closedFramesRef.current / total) * 100) / 100,
                                 isReady: true,
+                                velocity: Math.round(avgV * 1000) / 10, // Normalized 0-100ish energy
                             });
                         } catch (e) {
                             consecutiveErrorsRef.current++;

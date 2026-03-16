@@ -93,7 +93,7 @@ export class Orchestrator {
     private sessionStartTime: number = Date.now();
 
     // Rate limiting
-    private static readonly MIN_ALERT_INTERVAL_MS = 8000;    // max 1 alert per 8s
+    private static readonly MIN_ALERT_INTERVAL_MS = 1000;    // max 1 alert per 1s
     private static readonly CONTENT_ANALYSIS_INTERVAL_MS = 20000; // every 20s
     private static readonly METRICS_EMIT_INTERVAL_MS = 10000;     // every 10s
 
@@ -390,7 +390,7 @@ export class Orchestrator {
     private async runSharkCoaching(): Promise<void> {
         // Rate limit: don't roast more than once every 12 seconds
         const now = Date.now();
-        if (now - this.lastSharkRoastTs < 12000) return;
+        if (now - this.lastSharkRoastTs < 1000) return;
 
         // Don't roast if they haven't said enough yet
         if (this.transcriptBuffer.length < 50) return;
@@ -494,14 +494,6 @@ export class Orchestrator {
             message: signal.message,
             timestamp: now,
         });
-
-        // In Shark mode, send the alert for verbal delivery via client-side TTS
-        if (this.config.feedbackMode === 'shark') {
-            this.sendToClient({
-                type: 'shark_speak',
-                text: signal.message,
-            });
-        }
     }
 
     private emitMetrics(): void {

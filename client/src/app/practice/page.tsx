@@ -172,6 +172,10 @@ export default function Home() {
     shoulderExpansion: bodyMetrics?.shoulderExpansion ?? 1,
     gesturesPerMin: bodyMetrics?.gesturesPerMin || 0,
     handVisibility: bodyMetrics?.handVisibility || 0,
+    handEnergy: gestureMetrics?.velocity || 0,
+    handsHidden: bodyMetrics?.handsHidden || false,
+    gestureVariety: Object.keys(gestureMetrics?.gestureCounts || {}).length,
+    totalGestures: Object.values(gestureMetrics?.gestureCounts || {}).reduce((a: number, b: number) => a + b, 0),
     smileScore: bodyMetrics?.smileScore || 0,
     overallScore: bodyMetrics?.overallScore || 0,
     currentGestures: gestureMetrics?.currentGestures?.map((g: any) => g.gesture) || [],
@@ -372,12 +376,19 @@ export default function Home() {
           case 'alert': {
             const id = data.id || `alert-${++alertIdRef.current}`;
             const source = data.source || 'orchestrator';
+            const isShark = feedbackModeRef.current === 'shark';
+            
+            if (isShark) {
+              speakText(data.message);
+            }
+
             setAlerts(prev => [...prev, {
               id,
-              severity: data.severity || 'info',
-              message: `[${source}] ${data.message || ''}`,
+              severity: isShark ? 'critical' : (data.severity || 'info'),
+              message: isShark ? data.message : `[${source}] ${data.message || ''}`,
               timestamp: data.timestamp || Date.now(),
             }]);
+            
             setFeed(prev => [...prev, { timestamp: Date.now(), source, message: `Alert: ${data.message}` }]);
             return;
           }
@@ -762,12 +773,12 @@ export default function Home() {
 
           {/* Quick Stats Below Video (hidden in fullscreen) */}
           {!isFullscreen && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               {enabledAgents.posture && <QuickMetric label="Posture Angle" value={`${bodyMetrics.postureAngle}°`} color="blue" />}
               {enabledAgents.eyeContact && <QuickMetric label="Gaze Contact" value={`${realTimeEyeContact}%`} color="green" />}
+              {enabledAgents.gestures && <QuickMetric label="Hand Energy" value={gestureMetrics?.velocity || 0} color="amber" />}
               {enabledAgents.speech && <QuickMetric label="Pacing (WPM)" value={sessionMetrics.pacing || '--'} color="amber" />}
               {enabledAgents.speech && <QuickMetric label="Filler Rate" value={`${sessionMetrics.filler}/min`} color="red" />}
-              {enabledAgents.speech && <QuickMetric label="Filler Total" value={sessionMetrics.totalFillers} color="red" />}
             </div>
           )}
 
@@ -820,10 +831,21 @@ export default function Home() {
                             color="text-google-purple"
                           />
                           <MetricRow
-                            label="Hands Detected"
-                            value={`${gestureMetrics?.handsDetected ?? 0}`}
-                            good={(gestureMetrics?.handsDetected ?? 0) > 0}
+                            label="Gesture Variety"
+                            value={`${Object.keys(gestureMetrics?.gestureCounts || {}).length} types`}
+                            good={Object.keys(gestureMetrics?.gestureCounts || {}).length >= 3}
                             color="text-google-purple"
+                          />
+                          <MetricRow
+                            label="Hand Energy"
+                            value={`${Math.round(gestureMetrics?.velocity || 0)}/100`}
+                            good={(gestureMetrics?.velocity || 0) < 70}
+                            color="text-google-purple"
+                          />
+                          <MetricRow
+                            label="Hand Visibility"
+                            value={(bodyMetrics?.handsHidden || gestureMetrics?.handsDetected === 0) ? 'HIDDEN' : 'Visible'}
+                            good={!bodyMetrics?.handsHidden && (gestureMetrics?.handsDetected || 0) > 0}
                           />
                         </>
                       )}

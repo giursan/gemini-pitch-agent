@@ -67,6 +67,8 @@ export interface BodyLanguageMetrics {
     // Gestures
     gesturesPerMin: number;     // Estimated from wrist velocity spikes in sliding window
     handVisibility: number;     // 0–1 fraction of time hands are visible
+    handEnergy: number;         // 0–100 current movement intensity
+    handsHidden: boolean;       // True if hands are likely in pockets or behind back
 
     // Face
     smileScore: number;         // 0–1 current smile intensity
@@ -87,6 +89,8 @@ const DEFAULT_METRICS: BodyLanguageMetrics = {
     currentBreadthRatio: 0,
     gesturesPerMin: 0,
     handVisibility: 1,
+    handEnergy: 0,
+    handsHidden: false,
     smileScore: 0,
     expressiveness: 0,
     overallScore: 50,
@@ -140,6 +144,7 @@ export function useBodyLanguageAnalysis(
     const lastWristPosRef = useRef<{ left: { x: number; y: number }; right: { x: number; y: number } } | null>(null);
     const handVisibleCountRef = useRef(0);
     const totalFrameCountRef = useRef(0);
+    const hiddenFramesRef = useRef(0);
 
     useEffect(() => {
         if (!enabled) return;
@@ -328,7 +333,34 @@ export function useBodyLanguageAnalysis(
             }
             const gesturesPerMin = windowDurationMin > 0 ? gestureSpikes / windowDurationMin : 0;
 
-            // Hand visibility
+            // ── Hidden Hands Detection ────────────────────────────────────
+            const leftWrist = pose?.[LM.LEFT_WRIST];
+            const rightWrist = pose?.[LM.RIGHT_WRIST];
+            const leftHip = pose?.[LM.LEFT_HIP];
+            const rightHip = pose?.[LM.RIGHT_HIP];
+
+            let isHiddenNow = false;
+            if (leftWrist && rightWrist && leftHip && rightHip) {
+                const lVis = leftWrist.visibility ?? 0;
+                const rVis = rightWrist.visibility ?? 0;
+                
+                // Criteria: Low visibility AND near hip OR below hip line
+                const lNearHip = dist(leftWrist, leftHip) < 0.1 || leftWrist.y > leftHip.y;
+                const rNearHip = dist(rightWrist, rightHip) < 0.1 || rightWrist.y > rightHip.y;
+                
+                if ((lVis < 0.3 && lNearHip) || (rVis < 0.3 && rNearHip)) {
+                    isHiddenNow = true;
+                }
+            }
+
+            if (isHiddenNow) {
+                hiddenFramesRef.current++;
+            } else {
+                hiddenFramesRef.current = 0;
+            }
+            const handsHidden = hiddenFramesRef.current > 15; // ~1.5s at 10Hz
+
+            // Hand visibility calculation (restored)
             const handVisibility = totalFrameCountRef.current > 0
                 ? handVisibleCountRef.current / totalFrameCountRef.current
                 : 1;
@@ -340,6 +372,12 @@ export function useBodyLanguageAnalysis(
             const postureScore = Math.min(1, postureAngle / TED_BENCHMARKS.idealPostureAngle);
             const gestureScore = Math.min(1, gesturesPerMin / TED_BENCHMARKS.gesturesPerMin);
             const handVisScore = Math.min(1, handVisibility / TED_BENCHMARKS.handVisibilityPct);
+
+            // Hand energy estimate for telemetry
+            const recentVelocities = windowSamples.map(s => 
+                dist(s.leftWrist, s.rightWrist) // Proxy for "spread" and movement
+            );
+            const handEnergy = Math.min(100, Math.round(gesturesPerMin * 2 + (bodyStability < 0.8 ? 20 : 0)));
 
             const overallScore = Math.round(
                 (postureScore * 25 +
@@ -359,6 +397,8 @@ export function useBodyLanguageAnalysis(
                 bodyStability: Math.round(bodyStability * 100) / 100,
                 gesturesPerMin: Math.round(gesturesPerMin),
                 handVisibility: Math.round(handVisibility * 100) / 100,
+                handEnergy,
+                handsHidden,
                 smileScore: Math.round(smileScore * 100) / 100,
                 expressiveness: Math.round(expressiveness * 100) / 100,
                 overallScore: Math.min(100, Math.max(0, overallScore)),

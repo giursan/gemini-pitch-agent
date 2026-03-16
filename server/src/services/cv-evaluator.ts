@@ -14,7 +14,11 @@ export interface CvTelemetry {
     neckStability?: number;     // 0-1.2 relative to baseline
     shoulderExpansion?: number; // 0-1.2 relative to baseline
     gesturesPerMin: number;
-    handVisibility: number;     // 0-1
+    handEnergy?: number;
+    handsHidden?: boolean;
+    handsDetected?: number;
+    gestureVariety?: number;
+    totalGestures?: number;
     smileScore: number;         // 0-1
     overallScore: number;       // 0-100
     currentGestures: string[];
@@ -35,12 +39,15 @@ const EYE_CONTACT_GOOD = 70;
 
 const GESTURE_LOW_WARN = 8;     // gestures/min — too stiff
 const GESTURE_HIGH_WARN = 50;   // gestures/min — too fidgety
+const GESTURE_ENERGY_HIGH = 2; // Increased sensitivity
+const GESTURE_VARIETY_LOW = 3; 
+const GESTURE_MIN_FOR_VARIETY = 10;
 const GESTURE_TED_TARGET = 26;  // TED average
 
 const POSTURE_BAD_THRESHOLD_MS = 2000; // alert after 2s of bad posture
 const SHRIMP_BAD_THRESHOLD_MS = 2500;  // alert after 2.5s of rounding/shrimping
 const EYE_BAD_THRESHOLD_MS = 2500;     // alert after 2.5s of low contact
-const GLOBAL_COOLDOWN_MS = 8000;       // 8s cooldown for all agent-specific alerts
+const GLOBAL_COOLDOWN_MS = 1000;       // 1s cooldown for all agent-specific alerts
 const STABILITY_WARNING = 0.5;  // excessive swaying
 const SHRIMP_NECK_WARNING = 0.98; // <95% of baseline neck ratio
 const SHRIMP_SHOULDER_WARNING = 0.90; // <90% of baseline shoulder breadth
@@ -51,6 +58,7 @@ export class CvEvaluator {
     private badPostureSince: number | null = null;
     private badShrimpSince: number | null = null;
     private badEyeSince: number | null = null;
+    private highEnergySince: number | null = null;
     private lastEyeAlertTs = 0;
     private lastPostureAlertTs = 0;
     private lastGestureAlertTs = 0;
@@ -126,11 +134,37 @@ export class CvEvaluator {
 
         // ── Gestures ────────────────────────────────────────────────────
         if ((!agents || agents.gestures) && now - this.lastGestureAlertTs > GLOBAL_COOLDOWN_MS) {
-            if (telemetry.gesturesPerMin > 0 && telemetry.gesturesPerMin < GESTURE_LOW_WARN) {
-                signals.push({ source: 'gesture', severity: 'info', message: 'Use more hand gestures' });
+            
+            // Priority 1: Hidden hands (Now immediate check)
+            const noHandsVisible = telemetry.handsDetected === 0 || telemetry.handsHidden;
+            if (noHandsVisible) {
+                signals.push({ source: 'gesture', severity: 'warning', message: 'Show your hands' });
                 this.lastGestureAlertTs = now;
-            } else if (telemetry.gesturesPerMin > GESTURE_HIGH_WARN) {
-                signals.push({ source: 'gesture', severity: 'warning', message: 'Too many gestures' });
+                return signals; // Bail out - nothing else to analyze if hands are gone
+            }
+
+            // Priority 2: Erratic movement (Persistence check)
+            if (telemetry.handEnergy && telemetry.handEnergy > GESTURE_ENERGY_HIGH) {
+                if (!this.highEnergySince) {
+                    this.highEnergySince = now;
+                } else if (now - this.highEnergySince > 1000) { // 1 second persistence
+                    signals.push({ source: 'gesture', severity: 'info', message: 'Calm your movements' });
+                    this.lastGestureAlertTs = now;
+                    this.highEnergySince = null;
+                }
+            } else {
+                this.highEnergySince = null;
+            }
+
+            // Priority 3: Variety & Frequency
+            const total = telemetry.totalGestures || 0;
+            const variety = telemetry.gestureVariety || 0;
+            
+            if (total >= GESTURE_MIN_FOR_VARIETY && variety < GESTURE_VARIETY_LOW) {
+                signals.push({ source: 'gesture', severity: 'info', message: 'Vary your hand gestures' });
+                this.lastGestureAlertTs = now;
+            } else if (telemetry.gesturesPerMin > 0 && telemetry.gesturesPerMin < GESTURE_LOW_WARN) {
+                signals.push({ source: 'gesture', severity: 'info', message: 'Use more hand gestures' });
                 this.lastGestureAlertTs = now;
             }
         }
@@ -143,6 +177,7 @@ export class CvEvaluator {
         this.badPostureSince = null;
         this.badShrimpSince = null;
         this.badEyeSince = null;
+        this.highEnergySince = null;
         this.lastEyeAlertTs = 0;
         this.lastPostureAlertTs = 0;
         this.lastGestureAlertTs = 0;
