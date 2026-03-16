@@ -208,6 +208,11 @@ The backend service is containerized using Docker and is designed to operate as 
 
 *   **Deployment Configuration:** [server/Dockerfile](server/Dockerfile), the optimized container definition for GCP deployment.
 
+### 4. Automated Cloud Deployment
+To ensure consistent and reproducible environments, we have automated the cloud deployment workflow. 
+
+*   **Deployment Script:** [scripts/deploy-cloud-run.sh](scripts/deploy-cloud-run.sh) - A comprehensive bash script that handles authentication, project configuration, and deployment of the backend service to Google Cloud Run with the necessary environment mappings.
+
 ## Environment Setup & Reproducibility Guide
 
 To ensure high-fidelity reproducibility for the evaluation panel, Aura utilizes a standardized dual-stack architecture. Follow these sequenced instructions to instantiate the localized development environment.
@@ -243,6 +248,8 @@ The client-side application handles low-latency MediaPipe vision telemetry and W
     ```env
     NEXT_PUBLIC_FIREBASE_API_KEY=...
     NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
+    NEXT_PUBLIC_FIREBASE_APP_ID=...
     ```
 4.  **Operational Startup:** `npm run dev`
 
