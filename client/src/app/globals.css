@@ -1,0 +1,174 @@
+@import "tailwindcss/index.css";
+
+html,
+body,
+main {
+  scrollbar-gutter: stable;
+}
+
+:root {
+  --background: #f8f9fa;
+  --foreground: #1f1f1f;
+  --surface: #ffffff;
+  --primary: #1a73e8;
+  --primary-hover: #174ea6;
+  --secondary: #5f6368;
+  --border: #e0e0e0;
+  --google-blue: #1a73e8;
+  --google-red: #d93025;
+  --google-yellow: #f9ab00;
+  --google-green: #1aa260;
+  --google-purple: #9334e6;
+
+  --radius-xl: 24px;
+  --radius-2xl: 32px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-primary: var(--primary);
+  --color-google-blue: var(--google-blue);
+  --color-google-red: var(--google-red);
+  --color-google-yellow: var(--google-yellow);
+  --color-google-green: var(--google-green);
+  --color-google-purple: var(--google-purple);
+  --font-sans: var(--font-outfit), sans-serif;
+  --font-mono: var(--font-mono), monospace;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-outfit), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbar for Google feel */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #dadce0;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #bdc1c6;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+}
+
+.mesh-background {
+  background-color: #f8f9fa;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(26, 115, 232, 0.05) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(26, 162, 96, 0.05) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(147, 52, 230, 0.05) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, rgba(217, 48, 37, 0.03) 0px, transparent 50%);
+}
+
+.google-shadow {
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, .30), 0 1px 3px 1px rgba(60, 64, 67, .15);
+}
+
+.google-button {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.google-button:hover {
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, .30), 0 4px 8px 3px rgba(60, 64, 67, .15);
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes pulse-soft {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.blue-glow-hover:hover {
+  box-shadow: 0 10px 40px -10px rgba(26, 115, 232, 0.25);
+}
+
+.green-glow-hover:hover {
+  box-shadow: 0 10px 40px -10px rgba(26, 162, 96, 0.25);
+}
+
+.purple-glow-hover:hover {
+  box-shadow: 0 10px 40px -10px rgba(147, 52, 230, 0.25);
+}
+
+.dot-pulse {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #1aa260;
+}
+
+.dot-pulse::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: #1aa260;
+  animation: pulse-soft 2s infinite;
+}

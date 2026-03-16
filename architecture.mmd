@@ -1,0 +1,60 @@
+graph TD
+    subgraph Client [Frontend: Next.js & React]
+        UI[User Interface & Dashboard]
+        Capture[Audio/Video Capture]
+        MediaPipe[MediaPipe Vision Edge Processing]
+        
+        UI --> Capture
+        Capture --> MediaPipe
+    end
+
+    subgraph Backend [Backend Infrastructure: Node.js]
+        Gateway[WebSocket Gateway]
+        Orch[Deterministic Orchestrator]
+        CVProc[CV Telemetry Evaluator]
+        State[Session & State Manager]
+        
+        Gateway <--> Orch
+        Orch --- CVProc
+        Orch --- State
+    end
+
+    subgraph GCP [Google Cloud Platform]
+        subgraph ADK [Google Agent Development Kit]
+            subgraph LiveExperts [Multimodal Bio-Logic Experts]
+                Analyst[Analyst Expert: Silent Measurement]
+                Coach[Coach Expert: Vocal Interaction]
+            end
+        end
+        
+        ContentAgent[Content Expert: Rhetorical Audit]
+        
+        subgraph GeminiModels [Vertex AI Models]
+            LiveAPI[Gemini 2.5 Flash Audio API]
+            RESTAPI[Gemini 2.5 Flash API]
+        end
+    end
+
+    subgraph Data [Persistence]
+        Firestore[(Cloud Firestore)]
+        Auth[(Firebase Auth)]
+    end
+
+    %% Real-time Connections
+    Capture <==> |Raw Audio PCM| Gateway
+    MediaPipe <==> |Landmark Data| Gateway
+    
+    %% Agent Separation Flow
+    Orch <==> |WebSocket Session 1| LiveAPI
+    LiveAPI <--> Analyst
+    
+    Orch <==> |WebSocket Session 2| LiveAPI
+    LiveAPI <--> Coach
+
+    Orch <==> |REST / Batch| RESTAPI
+    RESTAPI <--> ContentAgent
+
+    %% Storage
+    State <--> Firestore
+    UI <--> Auth
+

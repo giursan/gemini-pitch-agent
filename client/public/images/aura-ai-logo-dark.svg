@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" rx="72" ry="72" fill="#000000"/>
+  <!-- Vertical lozenge -->
+  <polygon points="200,100 222,200 200,300 178,200" fill="#ffffff"/>
+  <!-- Horizontal lozenge -->
+  <polygon points="100,200 200,178 300,200 200,222" fill="#ffffff"/>
+</svg>
