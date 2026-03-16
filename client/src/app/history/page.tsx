@@ -17,11 +17,19 @@ interface SessionEntry {
 
 type SortOption = 'newest' | 'oldest' | 'score-high' | 'score-low' | 'title-az' | 'title-za';
 
-function formatDuration(ms: number): string {
-    const secs = Math.floor(ms / 1000);
-    const mins = Math.floor(secs / 60);
-    const remainSecs = secs % 60;
-    return mins > 0 ? `${mins}m ${remainSecs}s` : `${remainSecs}s`;
+function formatDuration(ms: number) {
+    const totalSeconds = Math.max(0, Math.round(ms / 1000));
+    // Handle legacy bugged data where durationMs was mistakenly saved as a timestamp
+    if (totalSeconds > 1000000) return '0min, 0sec';
+
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+        return `${hours}h, ${minutes}min, ${seconds}sec`;
+    }
+    return `${minutes}min, ${seconds}sec`;
 }
 
 export default function HistoryPage() {
@@ -54,10 +62,11 @@ export default function HistoryPage() {
         setSessions(sessions.filter(s => s.sessionId !== sessionId));
     };
 
-    const filteredSessions = sessions.filter(s =>
-        s.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        new Date(s.startedAt).toLocaleDateString().includes(searchQuery)
-    );
+    const filteredSessions = sessions.filter(s => {
+        const dateObj = new Date(s.startedAt || (s.durationMs > 1000000 ? s.durationMs : 0) || Date.now());
+        const dateStr = dateObj.toLocaleDateString('de-DE');
+        return s.title.toLowerCase().includes(searchQuery.toLowerCase()) || dateStr.includes(searchQuery);
+    });
 
     const sortedSessions = [...filteredSessions].sort((a, b) => {
         switch (sortOption) {
@@ -201,7 +210,7 @@ export default function HistoryPage() {
                                     </div>
                                     <div className="text-xs font-bold text-neutral-500 tracking-tight flex items-center gap-2">
                                         <Calendar className="w-3.5 h-3.5" />
-                                        {new Date(s.startedAt).toLocaleDateString('en-US', {
+                                        {new Date(s.startedAt || (s.durationMs > 1000000 ? s.durationMs : 0) || Date.now()).toLocaleDateString('de-DE', {
                                             weekday: 'short',
                                             month: 'short',
                                             day: 'numeric',

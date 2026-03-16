@@ -45,39 +45,70 @@ export const sessionStore = {
         overallScore: number;
         title: string;
     }>> {
-        const snapshot = await db.collection(SESSIONS_COLLECTION)
-            .orderBy('startedAt', 'desc')
-            .select('sessionId', 'startedAt', 'endedAt', 'durationMs', 'feedbackMode', 'report')
-            .get();
+        try {
+            const snapshot = await db.collectionGroup(SESSIONS_COLLECTION)
+                .orderBy('startedAt', 'desc')
+                .get();
 
-        return snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                sessionId: data.sessionId,
-                startedAt: data.startedAt,
-                endedAt: data.endedAt,
-                durationMs: data.durationMs,
-                feedbackMode: data.feedbackMode,
-                overallScore: data.report?.overallScore ?? 0,
-                title: data.report?.title ?? `Session ${data.sessionId.slice(0, 8)}`,
-            };
-        });
+            return snapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    sessionId: data.sessionId,
+                    startedAt: data.startedAt,
+                    endedAt: data.endedAt,
+                    durationMs: data.durationMs,
+                    feedbackMode: data.feedbackMode,
+                    overallScore: data.report?.overallScore ?? 0,
+                    title: data.report?.title ?? `Session ${data.sessionId.slice(0, 8)}`,
+                };
+            });
+        } catch (err: any) {
+            if (err.code === 9) { // FAILED_PRECONDITION
+                console.error('─── MISSING FIRESTORE INDEX ───');
+                console.error('A collection group index is required for "sessions" ordered by "startedAt" DESC.');
+                console.error('Please create it in the Firebase Console: https://console.firebase.google.com/project/_/firestore/indexes');
+                console.error('──────────────────────────────');
+            } else {
+                console.error('Failed to list sessions:', err);
+            }
+            return [];
+        }
     },
 
     /**
      * Get a full session by ID.
      */
     async get(sessionId: string): Promise<Record<string, any> | null> {
-        const doc = await db.collection(SESSIONS_COLLECTION).doc(sessionId).get();
-        if (!doc.exists) return null;
-        return doc.data() as Record<string, any>;
+        try {
+            const snapshot = await db.collectionGroup(SESSIONS_COLLECTION)
+                .where('sessionId', '==', sessionId)
+                .limit(1)
+                .get();
+            
+            if (snapshot.empty) return null;
+            return snapshot.docs[0].data() as Record<string, any>;
+        } catch (err: any) {
+            console.error(`Failed to get session ${sessionId}:`, err.message);
+            return null;
+        }
     },
 
     /**
      * Delete a session by ID.
      */
     async delete(sessionId: string): Promise<void> {
-        await db.collection(SESSIONS_COLLECTION).doc(sessionId).delete();
-        console.log(`Session deleted from Firestore: ${sessionId}`);
+        try {
+            const snapshot = await db.collectionGroup(SESSIONS_COLLECTION)
+                .where('sessionId', '==', sessionId)
+                .limit(1)
+                .get();
+            
+            if (!snapshot.empty) {
+                await snapshot.docs[0].ref.delete();
+                console.log(`Session deleted: ${sessionId}`);
+            }
+        } catch (err: any) {
+            console.error(`Failed to delete session ${sessionId}:`, err.message);
+        }
     },
 };

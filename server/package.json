@@ -10,12 +10,14 @@
   },
   "dependencies": {
     "@google/adk": "^0.3.0",
+    "@grpc/grpc-js": "^1.14.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "firebase-admin": "^13.7.0",
     "multer": "^2.1.1",
     "node-fetch": "^3.3.2",
+    "sharp": "^0.34.5",
     "ws": "^8.18.0",
     "zod": "^4.3.6"
   },

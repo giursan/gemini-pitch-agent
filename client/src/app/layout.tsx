@@ -34,7 +34,7 @@ export default function RootLayout({
         className={`${outfit.variable} ${inter.variable} ${jetbrainsMono.variable} antialiased h-screen w-screen overflow-hidden flex bg-background`}
       >
         <Sidebar />
-        <main className="flex-1 h-full overflow-y-auto relative bg-neutral-50">
+        <main className="flex-1 h-full overflow-y-auto relative mesh-background">
           {children}
         </main>
       </body>

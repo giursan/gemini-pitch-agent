@@ -11,6 +11,7 @@
 import admin from 'firebase-admin';
 import { GoogleGenAI } from '@google/genai';
 import { randomUUID } from 'crypto';
+import sharp from 'sharp';
 import type { SessionSummary } from './adk-live-session';
 
 // Re-use the Firebase Admin instance initialized in session-store.ts
@@ -37,6 +38,7 @@ export interface Material {
     extractedText: string;
     uploadedAt: number;
     sizeBytes: number;
+    previewUrl?: string; // Base64 data URL for images
 }
 
 export interface ImprovementTask {
@@ -200,6 +202,20 @@ export const projectStore = {
             extractedText = `[Text extraction failed for ${filename}]`;
         }
 
+        let previewUrl: string | undefined;
+        if (mimeType.startsWith('image/')) {
+            try {
+                const thumbnailBuffer = await sharp(fileBuffer)
+                    .resize(300, 300, { fit: 'inside', withoutEnlargement: true })
+                    .jpeg({ quality: 80 })
+                    .toBuffer();
+                previewUrl = `data:image/jpeg;base64,${thumbnailBuffer.toString('base64')}`;
+            } catch (err) {
+                console.error(`[ProjectStore] Failed to generate thumbnail for ${filename}:`, err);
+                // Fallback to small buffer if possible, or skip
+            }
+        }
+
         const material: Material = {
             materialId,
             filename,
@@ -207,6 +223,7 @@ export const projectStore = {
             extractedText,
             uploadedAt: Date.now(),
             sizeBytes: fileBuffer.length,
+            previewUrl,
         };
 
         await db.collection(PROJECTS_COLLECTION).doc(projectId)
