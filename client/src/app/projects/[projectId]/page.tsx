@@ -20,6 +20,7 @@ import {
     X,
     Folder
 } from 'lucide-react';
+import ProjectCoachChat from '../../ProjectCoachChat';
 
 interface Project {
     projectId: string;
@@ -477,6 +478,8 @@ export default function ProjectDetailPage() {
                     </div>
                 )}
             </div>
+            
+            <ProjectCoachChat projectId={projectId} />
         </div>
     );
 }

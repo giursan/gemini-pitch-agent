@@ -13,6 +13,8 @@ export interface ContentAssessment {
     argumentStrength: 'weak' | 'moderate' | 'strong';
     evidenceQuality: 'none' | 'anecdotal' | 'concrete' | 'data-driven';
     structureClarity: 'unclear' | 'partial' | 'clear';
+    contentCoveragePercentage: number;
+    contradictions: string[];
     persuasionTechniques: string[];
     suggestions: string[];
     summary: string;
@@ -23,6 +25,8 @@ const DEFAULT_ASSESSMENT: ContentAssessment = {
     argumentStrength: 'weak',
     evidenceQuality: 'none',
     structureClarity: 'unclear',
+    contentCoveragePercentage: 0,
+    contradictions: [],
     persuasionTechniques: [],
     suggestions: [],
     summary: 'Insufficient transcript to analyze.',
@@ -55,21 +59,45 @@ export class ContentAgent {
             const response = await this.ai.models.generateContent({
                 model: ContentAgent.MODEL,
                 contents: `${CONTENT_AGENT_PROMPT}\n\nTRANSCRIPT:\n${transcript}`,
+                config: {
+                    responseMimeType: 'application/json',
+                }
             });
 
-            // Manually extract text parts to avoid the 'thoughtSignature' warning clutter
             const text = response.candidates?.[0]?.content?.parts
                 ?.map(p => (p as any).text)
                 .filter(Boolean)
                 .join('') || '{}';
-            const cleaned = text.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
-            const parsed = JSON.parse(cleaned);
+            
+            // Clean markdown block if present, then attempt to find the first '{' and last '}'
+            let cleaned = text.trim();
+            if (cleaned.includes('```')) {
+                cleaned = cleaned.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+            }
+            
+            // If the model still returned some text before the JSON, find the actual object boundaries
+            const firstBrace = cleaned.indexOf('{');
+            const lastBrace = cleaned.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace !== -1) {
+                cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+            }
+
+            let parsed;
+            try {
+                parsed = JSON.parse(cleaned);
+            } catch (pErr) {
+                console.error(`[ContentAgent] JSON Parse Error. Original text:`, text);
+                console.error(`[ContentAgent] Cleaned text attempted:`, cleaned);
+                throw pErr;
+            }
 
             this.lastAssessment = {
                 contentScore: clamp(parsed.contentScore ?? 0, 0, 100),
                 argumentStrength: parsed.argumentStrength || 'weak',
                 evidenceQuality: parsed.evidenceQuality || 'none',
                 structureClarity: parsed.structureClarity || 'unclear',
+                contentCoveragePercentage: clamp(parsed.contentCoveragePercentage ?? 0, 0, 100),
+                contradictions: parsed.contradictions || [],
                 persuasionTechniques: parsed.persuasionTechniques || [],
                 suggestions: parsed.suggestions || [],
                 summary: parsed.summary || '',

@@ -1,18 +1,19 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import Webcam from 'react-webcam';
 import { Eye, Mic, TrendingUp, Pause, Hand, Maximize, Minimize, ActivitySquare, Terminal, Send, MessageSquare, Play, Square } from 'lucide-react';
 import { useEyeContact } from '../../hooks/useEyeContact';
 import { useBodyLanguageAnalysis, TED_BENCHMARKS, type PostureBaseline } from '../../hooks/useBodyLanguageAnalysis';
 import { useGestureRecognizer } from '../../hooks/useGestureRecognizer';
 import { loadBenchmarkProfile, scoreSession } from '../../hooks/useTEDBenchmarks';
-import SessionControls, { type SessionState, type FeedbackMode, type AgentSelection } from '../SessionControls';
+import SessionControls, { type SessionState, type FeedbackMode, type AgentSelection, type Persona } from '../SessionControls';
 import FeedbackOverlay, { type Alert } from '../FeedbackOverlay';
 import ReportView from '../ReportView';
 import { useSearchParams } from 'next/navigation';
 import { Folder, UserCheck } from 'lucide-react';
 import PostureCalibrationOverlay from '../PostureCalibrationOverlay';
+import ReactMarkdown from 'react-markdown';
 
 // ── Audio Util ──────────────────────────────────────────────────────────────────
 
@@ -33,7 +34,20 @@ function floatTo16BitPcmAndBase64(input: Float32Array): string {
 
 // ── Main Page ───────────────────────────────────────────────────────────────────
 
-export default function Home() {
+export default function PracticePage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen bg-neutral-50 flex flex-col items-center justify-center gap-4 animate-in fade-in duration-700">
+                <div className="w-12 h-12 border-4 border-google-blue/20 border-t-google-blue rounded-full animate-spin" />
+                <p className="text-sm font-bold text-neutral-400 uppercase tracking-widest">Initializing Practice Environment...</p>
+            </div>
+        }>
+            <Home />
+        </Suspense>
+    );
+}
+
+function Home() {
   const [sessionState, setSessionState] = useState<SessionState>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionMetrics, setSessionMetrics] = useState({ pacing: 0, filler: 0, totalFillers: 0, fillerWords: [] as string[], contentScore: 0, deliveryScore: 0 });
@@ -53,7 +67,13 @@ export default function Home() {
     eyeContact: true,
     posture: true,
     gestures: true,
-    speech: true
+    speech: true,
+    pacing: true,
+    fillerWords: true,
+    content: true,
+    congruity: true,
+    timeManagement: true,
+    expectedTimeMin: 10
   });
 
   const webcamRef = useRef<Webcam>(null);
@@ -67,6 +87,7 @@ export default function Home() {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const alertIdRef = useRef(0);
   const feedbackModeRef = useRef<FeedbackMode>('silent');
+  const personaRef = useRef<Persona>('mentor');
 
   const BARGE_IN_THRESHOLD = 0.05;
 
@@ -116,7 +137,7 @@ export default function Home() {
   const projectId = searchParams.get('projectId');
   const [projectTitle, setProjectTitle] = useState<string | null>(null);
 
-  const isActive = sessionState === 'recording' || sessionState === 'paused';
+  const isActive = sessionState === 'recording' || sessionState === 'paused' || sessionState === 'qa';
 
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement | null>(null);
@@ -264,31 +285,12 @@ export default function Home() {
     playbackTimeRef.current = startTime + buffer.duration;
   }, []);
 
-  const speakText = useCallback((text: string) => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
-
-    // Interrupt any active speech for a true "Shark" interruption vibe
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voices = window.speechSynthesis.getVoices();
-
-    // Attempt to select a high-quality female/authoritative voice if available
-    const preferredVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Female') || v.name.includes('Aria') || v.name.includes('Samantha'))) || voices[0];
-
-    if (preferredVoice) utterance.voice = preferredVoice;
-    utterance.rate = 1.05; // Slightly faster for punchy feedback
-    utterance.pitch = 0.95; // Slightly deeper for authority
-    utterance.volume = 1.0;
-
-    window.speechSynthesis.speak(utterance);
-  }, []);
-
   // ── Session Lifecycle ───────────────────────────────────────────────────
 
-  const handleStart = async (feedbackMode: FeedbackMode, agents: AgentSelection) => {
+  const handleStart = async (feedbackMode: FeedbackMode, persona: Persona, agents: AgentSelection) => {
     setEnabledAgents(agents);
     feedbackModeRef.current = feedbackMode;
+    personaRef.current = persona;
 
     if (!audioContextRef.current) {
       audioContextRef.current = new window.AudioContext({ sampleRate: 16000 });
@@ -326,6 +328,7 @@ export default function Home() {
         ws.send(JSON.stringify({
           type: 'session_start',
           feedbackMode,
+          persona,
           agents,
           projectId
         }));
@@ -357,6 +360,11 @@ export default function Home() {
             setSessionState('recording');
             return;
 
+          case 'session_qa_started':
+            setSessionState('qa');
+            setFeed(prev => [...prev, { timestamp: Date.now(), source: 'System', message: 'Live Q&A Phase Started. Gemini is now ready to grill.' }]);
+            return;
+
           case 'generating_report':
             setSessionState('generating');
             cleanupMedia();
@@ -376,16 +384,15 @@ export default function Home() {
           case 'alert': {
             const id = data.id || `alert-${++alertIdRef.current}`;
             const source = data.source || 'orchestrator';
-            const isShark = feedbackModeRef.current === 'shark';
+            const isLoud = feedbackModeRef.current === 'loud';
             
-            if (isShark) {
-              speakText(data.message);
-            }
+            // NOTE: We no longer call speakText(data.message) here in Loud mode
+            // because critical alerts are now routed through the Gemini Live native voice.
 
             setAlerts(prev => [...prev, {
               id,
-              severity: isShark ? 'critical' : (data.severity || 'info'),
-              message: isShark ? data.message : `[${source}] ${data.message || ''}`,
+              severity: isLoud ? 'critical' : (data.severity || 'info'),
+              message: isLoud ? data.message : `[${source}] ${data.message || ''}`,
               timestamp: data.timestamp || Date.now(),
             }]);
             
@@ -405,17 +412,17 @@ export default function Home() {
             }));
             return;
 
-          // ── Shark Mode Audio Output ────────────────────────────────
+          // ── Loud Mode Audio Output ────────────────────────────────
           case 'audio_output':
-            if (feedbackModeRef.current === 'shark' && data.data) {
+            if (feedbackModeRef.current === 'loud' && data.data) {
               playGeminiAudio(data.data);
             }
             return;
 
           case 'shark_speak':
-            if (feedbackModeRef.current === 'shark' && data.text) {
-              speakText(data.text);
-              // Also show as a critical alert
+            if (data.text) {
+              // GEMINI LIVE VOICE: Audio is injected server-side and played via 'audio_output' in Loud mode.
+              // In both modes, we show the text as a critical alert.
               const id = `shark-${Date.now()}`;
               setAlerts(prev => [{
                 id,
@@ -466,8 +473,8 @@ export default function Home() {
           }
         }
 
-        // Legacy: handle shark mode audio from raw Gemini messages
-        if (feedbackModeRef.current === 'shark' && data.serverContent?.modelTurn?.parts) {
+        // Legacy: handle loud mode audio from raw Gemini messages
+        if (feedbackModeRef.current === 'loud' && data.serverContent?.modelTurn?.parts) {
           for (const part of data.serverContent.modelTurn.parts) {
             if (part.inlineData?.mimeType?.startsWith('audio/') && part.inlineData.data) {
               playGeminiAudio(part.inlineData.data);
@@ -503,6 +510,11 @@ export default function Home() {
 
   const handleEnd = () => {
     wsRef.current?.send(JSON.stringify({ type: 'session_end' }));
+  };
+
+  const handleQA = () => {
+    setSessionState('qa'); // Optimistic update
+    wsRef.current?.send(JSON.stringify({ type: 'session_qa' }));
   };
 
   const handleNewSession = () => {
@@ -634,6 +646,7 @@ export default function Home() {
             onPause={handlePause}
             onResume={handleResume}
             onEnd={handleEnd}
+            onQA={handleQA}
           />
         </div>
       </header>
@@ -706,8 +719,10 @@ export default function Home() {
               {isActive && (
                 <>
                   <div className="px-4 py-2 bg-white/90 backdrop-blur-xl rounded-lg shadow-sm border border-neutral-200 flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-google-green animate-pulse" />
-                    <span className="text-[11px] font-bold tracking-wider text-neutral-700">LIVE FEEDBACK ACTIVE</span>
+                    <span className={`w-2 h-2 rounded-full ${sessionState === 'qa' ? 'bg-google-yellow' : 'bg-google-green'} animate-pulse`} />
+                    <span className="text-[11px] font-bold tracking-wider text-neutral-700">
+                      {sessionState === 'qa' ? 'LIVE Q&A GRILL ACTIVE' : 'LIVE FEEDBACK ACTIVE'}
+                    </span>
                   </div>
                   <div className="px-4 py-2 bg-google-blue/10 backdrop-blur-xl rounded-lg border border-neutral-200 flex items-center gap-2">
                     <span className="text-[11px] font-bold tracking-wider text-google-blue">{Object.values(enabledAgents).filter(Boolean).length} AGENT{Object.values(enabledAgents).filter(Boolean).length !== 1 ? 'S' : ''} MONITORING</span>
@@ -724,6 +739,18 @@ export default function Home() {
                     <Pause className="w-8 h-8 text-neutral-600" />
                   </div>
                   <span className="text-xl font-bold text-neutral-900">Session Paused</span>
+                </div>
+              </div>
+            )}
+
+            {sessionState === 'qa' && (
+              <div className="absolute top-6 right-6 z-40 animate-in fade-in slide-in-from-top-4 duration-500">
+                <div className="bg-google-yellow text-neutral-900 px-6 py-4 rounded-xl shadow-2xl border border-white/20 flex flex-col gap-1 items-start">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-neutral-900 animate-pulse" />
+                    <span className="text-xs font-black uppercase tracking-[0.2em]">Phase 2: The Grill</span>
+                  </div>
+                  <p className="text-[10px] font-bold opacity-70">Gemini is now judging your responses live.</p>
                 </div>
               </div>
             )}
@@ -1011,7 +1038,20 @@ export default function Home() {
                       chatMessages.map((msg, idx) => (
                         <div key={idx} className={`p-3 rounded-lg text-xs leading-relaxed ${msg.role === 'user' ? 'bg-google-blue/5 text-neutral-800 ml-8 border border-google-blue/10' : 'bg-neutral-50 border border-neutral-200 mr-8 text-neutral-700'}`}>
                           <span className="font-bold text-[9px] uppercase tracking-[0.1em] block mb-1.5 text-neutral-400">{msg.role === 'user' ? 'You' : 'Gemini'}</span>
-                          {msg.text}
+                          <div className="prose prose-xs max-w-none">
+                            <ReactMarkdown
+                              components={{
+                                p: ({node, ...props}) => <p className="mb-1 last:mb-0" {...props} />,
+                                ul: ({node, ...props}) => <ul className="list-disc pl-4 mb-2" {...props} />,
+                                ol: ({node, ...props}) => <ol className="list-decimal pl-4 mb-2" {...props} />,
+                                li: ({node, ...props}) => <li className="mb-0.5" {...props} />,
+                                strong: ({node, ...props}) => <strong className="font-bold" {...props} />,
+                                code: ({node, ...props}) => <code className="bg-neutral-200 px-1 rounded text-[10px] font-mono" {...props} />
+                              }}
+                            >
+                              {msg.text}
+                            </ReactMarkdown>
+                          </div>
                         </div>
                       ))
                     )}

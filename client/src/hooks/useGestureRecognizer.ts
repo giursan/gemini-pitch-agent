@@ -131,7 +131,7 @@ export function useGestureRecognizer(
                 offscreenCanvasRef.current = document.createElement('canvas');
 
                 let lastProcessTime = 0;
-                const FRAME_INTERVAL_MS = 0;
+                const FRAME_INTERVAL_MS = 66; // Limit to ~15 FPS to prevent WASM heap exhaustion
                 const MAX_CONSECUTIVE_ERRORS = 5;
                 const ERROR_BACKOFF_MS = 2000;
 

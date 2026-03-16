@@ -15,15 +15,26 @@ import type { LiveServerMessage } from '@google/genai';
 // ── Types ───────────────────────────────────────────────────────────────────────
 
 export interface AgentSelection {
+    // Visual
     eyeContact: boolean;
     posture: boolean;
     gestures: boolean;
+    // Delivery
     speech: boolean;
+    pacing: boolean;
+    fillerWords: boolean;
+    // Content
+    content: boolean;
+    congruity: boolean;
+    timeManagement: boolean;
+    // Settings
+    expectedTimeMin: number;
 }
 
 interface OrchestratorConfig {
     sessionId: string;
-    feedbackMode: 'silent' | 'shark';
+    feedbackMode: 'silent' | 'loud';
+    persona: 'mentor' | 'evaluator' | 'shark' | 'basic';
     agents: AgentSelection;
     ws: WebSocket;
     /** Project this session belongs to (null for legacy/unscoped sessions) */
@@ -48,28 +59,43 @@ Rules:
 - If they ask for strategy advice, be specific to their content/topic
 `;
 
-const SHARK_COACH_SYSTEM_PROMPT = `You are the Shark, a brutal but world-class presentation coach. You are watching a LIVE transcript of a presenter practicing their pitch.
+function getCoachSystemPrompt(persona: 'mentor' | 'evaluator' | 'shark' | 'basic'): string {
+    const roles = {
+        mentor: 'You are the Mentor, a friendly, encouraging, and constructive presentation coach.',
+        evaluator: 'You are the Evaluator, a neutral, objective, and data-driven presentation coach.',
+        shark: 'You are the Shark, a brutal but world-class presentation coach. You are extremely direct, critical, and authoritative, like a high-stakes investor.',
+        basic: 'You are a robotic assistant. Your job is to repeat directives exactly as provided, with no additional personality or commentary.'
+    };
+    
+    const rules = {
+        mentor: '- Be constructive, supportive, and point out areas for improvement gently.',
+        evaluator: '- State the facts and metrics directly without excessive emotion.',
+        shark: '- Be brutal but constructive. If they waste your time, tell them.',
+        basic: '- Repeat provided text EXACTLY. Do not add any extra words.'
+    };
+
+    return `${roles[persona]} You are watching a LIVE transcript of a presenter practicing their pitch.
 
 YOUR ROLE:
-- Interrupt the speaker if they are doing poorly (too many filler words, monotone, slow pacing, weak arguments).
-- Be extremely direct, critical, and authoritative. 
-- You are like a high-stakes investor. If they waste your time, tell them.
+- Interrupt the speaker if they are doing poorly (too many filler words, monotone, slow pacing, weak arguments, or contradictions).
+${rules[persona]}
 - If they are doing great, stay SILENT (respond with "NO_ROAST").
 
 RULES:
 - Your response MUST be EXACTLY ONE SENTENCE. No more.
 - Do NOT use fragments. Use full, powerful sentences.
-- Be brutal but constructive.
 - If you don't have something critical to say, return ONLY the exact text "NO_ROAST".
 
 CONTEXT:
 `;
+}
 
 // ── Orchestrator ────────────────────────────────────────────────────────────────
 
 export class Orchestrator {
-    private deliveryAgent: DeliveryAgent;
-    private contentAgent: ContentAgent;
+    private analystAgent: DeliveryAgent; // The "Ear" (Transcription/Metrics)
+    private coachAgent: DeliveryAgent;   // The "Voice" (Persona/Q&A)
+    private contentAgent: ContentAgent;  // The "Brain" (Batch Analysis)
     private cvEvaluator: CvEvaluator;
     private ws: WebSocket;
     private config: OrchestratorConfig;
@@ -93,7 +119,7 @@ export class Orchestrator {
     private sessionStartTime: number = Date.now();
 
     // Rate limiting
-    private static readonly MIN_ALERT_INTERVAL_MS = 1000;    // max 1 alert per 1s
+    private static readonly MIN_ALERT_INTERVAL_MS = 8000;    // max 1 alert per 8s
     private static readonly CONTENT_ANALYSIS_INTERVAL_MS = 20000; // every 20s
     private static readonly METRICS_EMIT_INTERVAL_MS = 10000;     // every 10s
 
@@ -126,20 +152,33 @@ export class Orchestrator {
         });
 
         // Initialize sub-agents
-        this.deliveryAgent = new DeliveryAgent(
+        this.analystAgent = new DeliveryAgent(
             config.sessionId,
-            config.feedbackMode,
-            config.agents.speech,
+            'analyst',
+            'silent', // Analysts MUST always be silent to prevent 1011/1008 conflicts
+            config.persona,
+            true, 
         );
+        
+        this.coachAgent = new DeliveryAgent(
+            config.sessionId,
+            'coach',
+            config.feedbackMode,
+            config.persona,
+            true, // Coaches always have speech engine capabilities
+        );
+
         this.contentAgent = new ContentAgent();
         this.cvEvaluator = new CvEvaluator();
 
-        // Wire up delivery agent callbacks (only meaningful if speech is enabled)
-        if (config.agents.speech) {
-            this.deliveryAgent.setOnDeliveryReport((report) => this.handleDeliveryReport(report));
-            this.deliveryAgent.setOnAudioOutput((pcm) => this.forwardAudioToClient(pcm));
-            this.deliveryAgent.setOnRawMessage((msg) => this.handleRawGeminiMessage(msg));
-        }
+        // Wire up Analyst agent callbacks (Metrics & Transcript)
+        // We always wire these so the Orchestrator can receive data if the agent is started
+        this.analystAgent.setOnDeliveryReport((report) => this.handleDeliveryReport(report));
+        this.analystAgent.setOnRawMessage((msg) => this.handleRawGeminiMessage(msg));
+
+        // Wire up Coach agent callbacks (Vocal Interjections & Audio Output)
+        this.coachAgent.setOnAudioOutput((pcm) => this.forwardAudioToClient(pcm));
+        this.coachAgent.setOnRawMessage((msg) => this.handleRawGeminiMessage(msg));
     }
 
     /**
@@ -155,9 +194,23 @@ export class Orchestrator {
             if (this.config.tasksContext) console.log(`[Orchestrator] Tasks context loaded`);
         }
 
-        // Connect Delivery Agent only if speech is enabled
-        if (agents.speech) {
-            await this.deliveryAgent.connect();
+        // Logic for which agents to connect:
+        // 1. Analyst: needed if Speech Metrics, Content Metrics, or Loud Mode (for transcript context) is on.
+        const needsAnalyst = agents.speech || agents.content || this.config.feedbackMode === 'loud';
+        // 2. Coach: needed if Loud Mode is on.
+        const needsCoach = this.config.feedbackMode === 'loud';
+
+        // Connect agents sequentially with a small delay to avoid WebSocket handshake collisions
+        if (needsAnalyst) {
+            console.log(`[Orchestrator] Connecting Analyst (metrics/transcript engine)...`);
+            await this.analystAgent.connect();
+            // Small delay to let the first socket stabilize
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        if (needsCoach) {
+            console.log(`[Orchestrator] Connecting Coach (vocal persona engine)...`);
+            await this.coachAgent.connect();
         }
 
         // Start periodic content analysis only if speech is enabled (needs transcript)
@@ -167,18 +220,53 @@ export class Orchestrator {
             }, Orchestrator.CONTENT_ANALYSIS_INTERVAL_MS);
         }
 
-        // Start periodic metrics emission
         this.metricsInterval = setInterval(() => {
             if (!this.isPaused) this.emitMetrics();
         }, Orchestrator.METRICS_EMIT_INTERVAL_MS);
+    }
+
+    /**
+     * Trigger Phase 2: Live Q&A Grill.
+     * Uses the Live API to inject a brutal question based on content.
+     */
+    async startQA(): Promise<void> {
+        console.log(`[Orchestrator:${this.config.sessionId}] Starting Live Q&A Grill Phase...`);
+        this.logEvent('system', { message: 'Transitioning to Phase 2: Live Q&A' });
+
+        // Stop the background analytics loops
+        if (this.contentAnalysisInterval) clearInterval(this.contentAnalysisInterval);
+        if (this.metricsInterval) clearInterval(this.metricsInterval);
+
+        // Get the juiciest contradiction to ask about
+        const assessment = this.contentAgent.getLastAssessment();
+        let contradictionPrompt = '';
+        if (assessment.contradictions && assessment.contradictions.length > 0) {
+            contradictionPrompt = `Ask them immediately about this specific contradiction from their pitch: "${assessment.contradictions[0]}"`;
+        } else {
+            contradictionPrompt = `Ask them a very difficult question about the weakest part of their argument.`;
+        }
+
+        // We use the coachAgent's Live API connection to become the talking persona
+        // Note: Q&A can only work if the coach is connected (Loud Mode).
+        if (this.config.feedbackMode === 'loud') {
+            const qaPrompt = `The presenter just finished their pitch and requested a Q&A session. 
+You are now acting as the ${this.config.persona} persona.
+Switch from being a silent observer to a LOUD, active participant.
+${contradictionPrompt}
+Be very brief (1-2 sentences max) and wait for them to answer.`;
+            
+            this.coachAgent.injectCoachingDirective(qaPrompt);
+        }
     }
 
     // ── Input Handlers ──────────────────────────────────────────────────────
 
     /** Handle incoming audio chunks from the client */
     handleAudio(pcmData: string): void {
-        if (this.isPaused || !this.config.agents.speech) return;
-        this.deliveryAgent.sendAudioChunk(pcmData);
+        if (this.isPaused) return;
+        // Pipe to whoever is currently connected
+        this.analystAgent.sendAudioChunk(pcmData);
+        this.coachAgent.sendAudioChunk(pcmData);
     }
 
     /** Handle CV telemetry snapshots from the client */
@@ -186,7 +274,7 @@ export class Orchestrator {
         if (this.isPaused) return;
 
         this.cvSnapshots.push({ ts: Date.now(), ...telemetry });
-        this.deliveryAgent.logEvent('cv_telemetry', telemetry);
+        this.logEvent('cv_telemetry', telemetry);
 
         // Run deterministic CV evaluation with agent filter
         const signals = this.cvEvaluator.evaluate(
@@ -212,13 +300,13 @@ export class Orchestrator {
             ? this.cvSnapshots[this.cvSnapshots.length - 1]
             : null;
 
-        const recentAlerts = this.deliveryAgent.timeline
+        const recentAlerts = this.analystAgent.timeline
             .filter(e => e.type === 'alert')
             .slice(-5)
             .map(e => `[${e.data.source}] ${e.data.severity}: ${e.data.message}`);
 
         const contentAssessment = this.contentAgent.getLastAssessment();
-        const sessionDurationSec = Math.round((Date.now() - this.deliveryAgent.startedAt) / 1000);
+        const sessionDurationSec = Math.round((Date.now() - this.analystAgent.startedAt) / 1000);
 
         const contextBlock = [
             `SESSION CONTEXT (live, ${sessionDurationSec}s into session):`,
@@ -250,7 +338,7 @@ export class Orchestrator {
 
         try {
             const response = await this.chatAi.models.generateContent({
-                model: 'gemini-flash-latest',
+                model: 'gemini-2.5-flash',
                 contents: prompt,
             });
 
@@ -278,7 +366,8 @@ export class Orchestrator {
 
     /** Handle barge-in events */
     handleBargeIn(): void {
-        this.deliveryAgent.endTurn();
+        this.analystAgent.endTurn();
+        this.coachAgent.endTurn();
     }
 
     /** Pause the session */
@@ -321,9 +410,7 @@ export class Orchestrator {
             this.transcriptLength += report.transcript.length;
 
             this.sendToClient({ type: 'transcript', text: report.transcript });
-
-            // Log transcript event
-            this.deliveryAgent.logEvent('transcript', {
+            this.logEvent('transcript', {
                 speaker: 'user',
                 text: report.transcript,
             });
@@ -339,17 +426,27 @@ export class Orchestrator {
     private evaluateDelivery(report: DeliveryReport): OrchestratorSignal[] {
         const signals: OrchestratorSignal[] = [];
 
-        // Only alert on extreme values
+        // 1. Pacing Alerts
         if (report.pacing > 0) {
-            if (report.pacing > 180) {
-                signals.push({ source: 'delivery', severity: 'warning', message: 'Slow down your pace' });
-            } else if (report.pacing < 100 && report.pacing > 0) {
-                signals.push({ source: 'delivery', severity: 'info', message: 'Pick up the pace' });
+            if (report.pacing > 185) {
+                signals.push({ source: 'delivery', severity: 'warning', message: 'Slow down. Your pace is too fast.' });
+            } else if (report.pacing < 90 && report.pacing > 0) {
+                signals.push({ source: 'delivery', severity: 'info', message: 'Pick up the pace. You are slowing down.' });
             }
         }
 
-        if (report.filler > 8) {
-            signals.push({ source: 'delivery', severity: 'warning', message: 'Reduce filler words' });
+        // 2. Filler Word Alerts
+        if (report.filler > 7) {
+            signals.push({ source: 'delivery', severity: 'warning', message: 'Watch your filler words.' });
+        }
+
+        // 3. Vocal Variety (Energy) Alerts
+        if (report.vocalVariety !== undefined) {
+            if (report.vocalVariety < 45) {
+                signals.push({ source: 'delivery', severity: 'info', message: 'You sound monotone. Vary your pitch.' });
+            } else if (report.vocalVariety > 90) {
+                signals.push({ source: 'delivery', severity: 'warning', message: 'Your energy is too high. Calm your voice.' });
+            }
         }
 
         return signals;
@@ -368,7 +465,7 @@ export class Orchestrator {
             );
             this.latestContentScore = assessment.contentScore;
 
-            this.deliveryAgent.logEvent('content_report', {
+            this.logEvent('content_report', {
                 ...assessment,
             });
 
@@ -378,8 +475,9 @@ export class Orchestrator {
                 this.processSignal(signal);
             }
 
-            // Trigger Shark Coaching if in shark mode
-            if (this.config.feedbackMode === 'shark') {
+            // Trigger coaching for personalized textual/voice feedback
+            // SKIP periodic roasts if persona is 'basic'
+            if (this.config.persona !== 'basic') {
                 this.runSharkCoaching();
             }
         } catch (err) {
@@ -390,7 +488,7 @@ export class Orchestrator {
     private async runSharkCoaching(): Promise<void> {
         // Rate limit: don't roast more than once every 12 seconds
         const now = Date.now();
-        if (now - this.lastSharkRoastTs < 1000) return;
+        if (now - this.lastSharkRoastTs < 12000) return;
 
         // Don't roast if they haven't said enough yet
         if (this.transcriptBuffer.length < 50) return;
@@ -410,8 +508,8 @@ export class Orchestrator {
 
         try {
             const response = await this.chatAi.models.generateContent({
-                model: 'gemini-flash-latest',
-                contents: SHARK_COACH_SYSTEM_PROMPT + context,
+                model: 'gemini-2.5-flash',
+                contents: getCoachSystemPrompt(this.config.persona) + context,
             });
 
             // Manually extract text parts to avoid the 'thoughtSignature' warning clutter
@@ -423,11 +521,17 @@ export class Orchestrator {
 
             if (roast !== 'NO_ROAST' && !roast.includes('NO_ROAST')) {
                 this.lastSharkRoastTs = Date.now();
-                // Send back for client-side TTS (more stable than Live API audio currently)
+                
+                // 1. Send text to client for UI logging/alerts
                 this.sendToClient({
                     type: 'shark_speak',
                     text: roast,
                 });
+
+                // 2. Route to Coach Agent for Native Voice if in loud mode
+                if (this.config.feedbackMode === 'loud') {
+                    this.coachAgent.injectCoachingDirective(roast);
+                }
             }
         } catch (err) {
             console.error('[Orchestrator] Shark coaching error:', err);
@@ -450,6 +554,31 @@ export class Orchestrator {
 
         if (assessment.structureClarity === 'unclear') {
             signals.push({ source: 'content', severity: 'info', message: 'Clarify your main point' });
+        }
+
+        // Granular Setup Checks
+        if (this.config.agents.congruity && assessment.contradictions && assessment.contradictions.length > 0) {
+            // Emits a critical alert based on the first major contradiction found
+            signals.push({ 
+                source: 'content', 
+                severity: 'critical', 
+                message: `Contradiction: ${assessment.contradictions[0]}` 
+            });
+        }
+
+        if (this.config.agents.timeManagement) {
+            const elapsedMins = (Date.now() - this.sessionStartTime) / 60000;
+            const expectedMins = this.config.agents.expectedTimeMin || 10;
+            const timePassedPct = (elapsedMins / expectedMins) * 100;
+            
+            // If they are more than halfway through their time, but haven't covered half their material
+            if (timePassedPct > 50 && assessment.contentCoveragePercentage < 30) {
+                signals.push({ 
+                    source: 'content', 
+                    severity: 'warning', 
+                    message: `You've used ${Math.round(timePassedPct)}% of your time, but only covered ${assessment.contentCoveragePercentage}% of the deck!`
+                });
+            }
         }
 
         return signals;
@@ -478,8 +607,8 @@ export class Orchestrator {
         this.lastAlertTs = now;
         this.alertIdCounter++;
 
-        // Log to timeline
-        this.deliveryAgent.logEvent('alert', {
+        // Log to timeline (Using Analyst agent as the primary event log)
+        this.logEvent('alert', {
             source: signal.source,
             severity: signal.severity,
             message: signal.message,
@@ -494,6 +623,11 @@ export class Orchestrator {
             message: signal.message,
             timestamp: now,
         });
+
+        // 3. If in LOUD mode, route the alert to the Coach Agent so Gemini speaks it naturally
+        if (this.config.feedbackMode === 'loud') {
+            this.coachAgent.injectCoachingDirective(signal.message);
+        }
     }
 
     private emitMetrics(): void {
@@ -537,13 +671,17 @@ export class Orchestrator {
     // ── Lifecycle ───────────────────────────────────────────────────────────
 
     getSessionSummary(): SessionSummary {
-        const partialSummary = this.deliveryAgent.getSessionSummary();
+        const partialSummary = this.analystAgent.getSessionSummary();
         return {
             ...partialSummary,
             agents: this.config.agents,
             cvSnapshots: this.cvSnapshots,
             tasksContext: this.config.tasksContext,
         };
+    }
+
+    private logEvent(type: TimelineEvent['type'], data: Record<string, any>): void {
+        this.analystAgent.logEvent(type, data);
     }
 
     stop(): void {
@@ -555,7 +693,8 @@ export class Orchestrator {
             clearInterval(this.metricsInterval);
             this.metricsInterval = null;
         }
-        this.deliveryAgent.disconnect();
+        this.analystAgent.disconnect();
+        this.coachAgent.disconnect();
         this.cvEvaluator.reset();
         console.log(`[Orchestrator:${this.config.sessionId}] Stopped.`);
     }

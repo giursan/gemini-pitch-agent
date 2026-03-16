@@ -1,6 +1,7 @@
 'use client';
 
 import { Eye, User, Hand, Mic, FileText, BarChart2, Check, ArrowUp, Lightbulb, Target, Award, List } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 
 interface ReportViewProps {
     report: Record<string, any>;
@@ -117,13 +118,15 @@ export default function ReportView({ report, sessionId, onNewSession }: ReportVi
                                             {cat.score}
                                         </div>
                                     </div>
-                                    <p className="text-xs font-medium text-neutral-500 leading-relaxed mb-4">{cat.summary}</p>
+                                    <div className="text-xs font-medium text-neutral-500 leading-relaxed mb-4 prose prose-xs max-w-none">
+                                        <ReactMarkdown>{cat.summary}</ReactMarkdown>
+                                    </div>
                                     {cat.tips?.length > 0 && (
                                         <div className="space-y-2">
                                             {cat.tips.slice(0, 2).map((tip: string, i: number) => (
-                                                <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-neutral-50 border border-neutral-200 text-[11px] font-medium text-neutral-600 leading-tight">
+                                                <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-neutral-50 border border-neutral-200 text-[11px] font-medium text-neutral-600 leading-tight prose prose-xs max-w-none">
                                                     <Lightbulb className="w-4 h-4 text-google-blue shrink-0 mt-0.5" />
-                                                    {tip}
+                                                    <ReactMarkdown>{tip}</ReactMarkdown>
                                                 </div>
                                             ))}
                                         </div>
@@ -208,9 +211,9 @@ export default function ReportView({ report, sessionId, onNewSession }: ReportVi
                             </div>
                             <div className="mt-8 text-center pt-8 border-t border-border/50 w-full">
                                 <p className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Coach Note</p>
-                                <p className="text-sm font-medium text-neutral-600 italic leading-relaxed">
-                                    &quot;{report.coachNote || 'Your presentation showed strong engagement potential. Keep refining the gesture pace.'}&quot;
-                                </p>
+                                <div className="text-sm font-medium text-neutral-600 italic leading-relaxed prose prose-xs max-w-none text-center">
+                                    <ReactMarkdown>{`"${report.coachNote || 'Your presentation showed strong engagement potential. Keep refining the gesture pace.'}"`}</ReactMarkdown>
+                                </div>
                             </div>
                         </div>
 
@@ -243,7 +246,9 @@ export default function ReportView({ report, sessionId, onNewSession }: ReportVi
                                                         {m.type}
                                                     </span>
                                                 </div>
-                                                <p className="text-[11px] font-medium text-neutral-600 leading-snug">{m.description}</p>
+                                                <div className="text-[11px] font-medium text-neutral-600 leading-snug prose prose-xs max-w-none">
+                                                    <ReactMarkdown>{m.description}</ReactMarkdown>
+                                                </div>
                                             </div>
                                         </div>
                                     ))}

@@ -9,6 +9,7 @@ import { Orchestrator } from './services/orchestrator';
 import { generateReport } from './services/report-generator';
 import { sessionStore } from './services/session-store';
 import { projectStore } from './services/project-store';
+import { streamProjectCoachResponse } from './services/project-coach';
 
 dotenv.config();
 
@@ -110,6 +111,37 @@ app.delete('/projects/:id', async (req, res) => {
     } catch (err) {
         console.error('Failed to delete project:', err);
         res.status(500).json({ error: 'Failed to delete project' });
+    }
+});
+
+app.post('/projects/:id/chat', async (req, res) => {
+    try {
+        const { message, history } = req.body;
+        const projectId = req.params.id;
+
+        if (!message) return res.status(400).json({ error: 'Message is required' });
+
+        // Set headers for streaming
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        await streamProjectCoachResponse(
+            projectId,
+            message,
+            history || [],
+            (chunk) => {
+                res.write(chunk);
+            }
+        );
+
+        res.end();
+    } catch (err) {
+        console.error('Project chat error:', err);
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to generate chat response' });
+        } else {
+            res.end();
+        }
     }
 });
 
@@ -235,6 +267,7 @@ wss.on('connection', (ws: WebSocket) => {
                 case 'session_start': {
                     const sessionId = randomUUID();
                     const feedbackMode = data.feedbackMode || 'silent';
+                    const persona = data.persona || 'mentor';
                     const projectId = data.projectId || null;
                     currentProjectId = projectId;
                     const agents = {
@@ -242,6 +275,12 @@ wss.on('connection', (ws: WebSocket) => {
                         posture: data.agents?.posture ?? true,
                         gestures: data.agents?.gestures ?? true,
                         speech: data.agents?.speech ?? true,
+                        pacing: data.agents?.pacing ?? true,
+                        fillerWords: data.agents?.fillerWords ?? true,
+                        content: data.agents?.content ?? true,
+                        congruity: data.agents?.congruity ?? true,
+                        timeManagement: data.agents?.timeManagement ?? true,
+                        expectedTimeMin: data.agents?.expectedTimeMin ?? 10,
                     };
 
                     // Load project context if scoped to a project
@@ -259,6 +298,7 @@ wss.on('connection', (ws: WebSocket) => {
                     orchestrator = new Orchestrator({
                         sessionId,
                         feedbackMode,
+                        persona,
                         agents,
                         ws,
                         projectId,
@@ -299,6 +339,13 @@ wss.on('connection', (ws: WebSocket) => {
                     isPaused = false;
                     orchestrator?.resume();
                     ws.send(JSON.stringify({ type: 'session_resumed' }));
+                    break;
+                }
+
+                case 'session_qa': {
+                    isPaused = false;
+                    orchestrator?.startQA();
+                    ws.send(JSON.stringify({ type: 'session_qa_started' }));
                     break;
                 }
 

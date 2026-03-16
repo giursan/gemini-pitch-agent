@@ -84,12 +84,15 @@ export function useEyeContact(
             locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
         });
         poseObj.setOptions({
-            modelComplexity: 1,
+            modelComplexity: 0, // Lite model is much faster and sufficient for posture
             smoothLandmarks: true,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
         const currentPose = poseObj;
+
+        let lastModelProcessTime = 0;
+        const MIN_PROCESS_INTERVAL = 66; // Limit to 15 FPS
 
         let activeCanvasCtx: CanvasRenderingContext2D | null = null;
 
@@ -399,12 +402,16 @@ export function useEyeContact(
         if (videoMode) {
             // VIDEO MODE: Use requestAnimationFrame to process frames while video plays
             const processVideoFrame = async () => {
+                const now = performance.now();
                 if (videoElement && !videoElement.paused && !videoElement.ended && videoElement.readyState >= 2 && !isClosed) {
-                    try {
-                        if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
-                        if (currentPose) await currentPose.send({ image: videoElement });
-                    } catch (e) {
-                        // Silently handle frame processing errors
+                    if (now - lastModelProcessTime >= MIN_PROCESS_INTERVAL) {
+                        try {
+                            lastModelProcessTime = now;
+                            if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
+                            if (currentPose) await currentPose.send({ image: videoElement });
+                        } catch (e) {
+                            // Silently handle frame processing errors
+                        }
                     }
                 }
                 if (!isClosed) rafId = requestAnimationFrame(processVideoFrame);
@@ -415,12 +422,16 @@ export function useEyeContact(
             // LIVE MODE: Use MediaPipe Camera utility (starts getUserMedia)
             cameraRef.current = new CameraConstructor(videoElement, {
                 onFrame: async () => {
+                    const now = performance.now();
                     if (videoElement && !isClosed) {
-                        try {
-                            if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
-                            if (currentPose) await currentPose.send({ image: videoElement });
-                        } catch (e) {
-                            // Silently handle exceptions from closed models
+                        if (now - lastModelProcessTime >= MIN_PROCESS_INTERVAL) {
+                            try {
+                                lastModelProcessTime = now;
+                                if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoElement });
+                                if (currentPose) await currentPose.send({ image: videoElement });
+                            } catch (e) {
+                                // Silently handle exceptions from closed models
+                            }
                         }
                     }
                 },
