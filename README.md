@@ -7,7 +7,7 @@
 
   <p>
     <img src="https://img.shields.io/badge/Gemini_Live_Agent_Challenge-2026-4285F4?style=flat-square&logo=google" alt="Gemini Challenge" />
-    <img src="https://img.shields.io/badge/Category-Presentation_Coaching-10B981?style=flat-square" alt="Category" />
+    <img src="https://img.shields.io/badge/Category-Live_Agents-10B981?style=flat-square" alt="Category" />
     <img src="https://img.shields.io/badge/Platform-Web-111827?style=flat-square&logo=googlechrome" alt="Platform" />
     <img src="https://img.shields.io/badge/GCP-Cloud_Run-E8F0FE?style=flat-square&logo=googlecloud&logoColor=4285F4&labelColor=111827" alt="GCP" />
   </p>
